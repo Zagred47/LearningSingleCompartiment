@@ -2212,15 +2212,19 @@ class DiagnosticDatasetSession:
                 )
                 self.audit.plt.close(figure)
 
-    def _write_artifact_index(self) -> None:
+    def _write_artifact_index(
+        self, known_hashes: Optional[Mapping[str, str]] = None
+    ) -> None:
+        known_hashes = dict(known_hashes or {})
         records = []
         for path in sorted(self.output_dir.rglob("*")):
             if path.is_file() and path.name != "artifact_index.json":
+                relative = path.relative_to(self.output_dir).as_posix()
                 records.append(
                     {
-                        "path": path.relative_to(self.output_dir).as_posix(),
+                        "path": relative,
                         "size_bytes": path.stat().st_size,
-                        "sha256": sha256_file(path),
+                        "sha256": known_hashes.get(relative) or sha256_file(path),
                     }
                 )
         write_json(

@@ -29,6 +29,7 @@ from .targeted_contract import (
     build_input_views,
     summarize_independent_support,
     validate_minimum_support,
+    validate_support_contract,
 )
 from .targeted_protocols import (
     TargetedRecipe,
@@ -71,6 +72,7 @@ __all__ = [
     "build_input_views",
     "summarize_independent_support",
     "validate_minimum_support",
+    "validate_support_contract",
     "TargetedRecipe",
     "action_schedule_from_json",
     "append_specialized_test_episodes",

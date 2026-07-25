@@ -631,10 +631,12 @@ def build_budgeted_episode_plan(
 ) -> Tuple[List[ProtocolTrajectory], List[Dict[str, Any]], Dict[str, Any]]:
     """Maximize independent support inside an explicit transition budget.
 
-    Preferred support remains the scientific target, while the minimum maps
-    define the smallest acceptable diagnostic dataset.  The planner searches
-    deterministically between them and includes all specialized test episodes
-    in every budget calculation.
+    Preferred support is the nominal planning target, while the minimum maps
+    define the pre-registered acceptance floor for a diagnostic dataset.  The
+    planner searches deterministically between them and includes all
+    specialized test episodes in every budget calculation.  Realized labels
+    are validated separately because new Random123 seeds can move observed
+    support below the nominal quota.
     """
 
     preferred_positive = dict(preferred_positive_targets)

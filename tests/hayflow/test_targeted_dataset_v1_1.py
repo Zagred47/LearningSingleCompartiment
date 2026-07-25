@@ -1,5 +1,12 @@
 import unittest
 import math
+import json
+import tempfile
+import hashlib
+import sys
+import types
+from pathlib import Path
+from unittest.mock import patch
 
 from src.hayflow_data import (
     CAUSAL_OBSERVATION_PHASE,
@@ -14,6 +21,7 @@ from src.hayflow_data import (
     select_adaptive_recipe_brackets,
     summarize_independent_support,
     validate_minimum_support,
+    validate_support_contract,
 )
 from src.hayflow_teacher.event_extractor import (
     EventDefinition,
@@ -678,6 +686,420 @@ class TargetedProtocolPlannerTest(unittest.TestCase):
             if row.split == "held_out_branch_test"
         }
         self.assertTrue(train_branches.isdisjoint(heldout_branches))
+
+
+class TargetedSupportAcceptanceTest(unittest.TestCase):
+    classes = (
+        "axonal_spike",
+        "somatic_spike",
+        "backpropagating_ap",
+        "calcium_spike",
+        "nmda_spike",
+        "nmda_plateau",
+    )
+
+    def support(self, positive, negative):
+        return {
+            kind: {
+                "train": {
+                    "positive_episode_count": positive,
+                    "hard_negative_episode_count": negative,
+                }
+            }
+            for kind in self.classes
+        }
+
+    def test_observed_support_between_floor_and_plan_is_valid_with_warning(self):
+        result = validate_support_contract(
+            self.support(23, 47),
+            minimum_positive_targets={"train": 8},
+            minimum_hard_negative_targets={"train": 16},
+            planned_positive_targets={"train": 24},
+            planned_hard_negative_targets={"train": 48},
+        )
+        self.assertTrue(result["valid"])
+        self.assertTrue(result["minimum_support_validation"]["valid"])
+        self.assertFalse(result["planned_target_attainment"]["valid"])
+
+    def test_observed_support_below_pre_registered_floor_is_invalid(self):
+        result = validate_support_contract(
+            self.support(7, 16),
+            minimum_positive_targets={"train": 8},
+            minimum_hard_negative_targets={"train": 16},
+            planned_positive_targets={"train": 24},
+            planned_hard_negative_targets={"train": 48},
+        )
+        self.assertFalse(result["valid"])
+        failures = result["minimum_support_validation"]["failures"]
+        self.assertEqual(len(failures), len(self.classes))
+        self.assertTrue(all(row["positive"] == 7 for row in failures))
+
+    def test_legacy_artifact_reads_floor_from_pre_generation_budget(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "planning_budget_report.json").write_text(
+                json.dumps(
+                    {
+                        "effective_positive_targets": {"train": 24},
+                        "effective_hard_negative_targets": {"train": 48},
+                        "minimum_positive_targets": {"train": 8},
+                        "minimum_hard_negative_targets": {"train": 16},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            session = object.__new__(TargetedDiagnosticDatasetSession)
+            session.output_dir = root
+            session.targeted_preflight_report = {
+                "positive_support_targets": {"train": 24},
+                "hard_negative_support_targets": {"train": 48},
+            }
+            targets = session._support_target_contract()
+            self.assertEqual(targets["planned_positive"], {"train": 24})
+            self.assertEqual(targets["minimum_positive"], {"train": 8})
+
+    def test_preflight_cannot_shadow_the_pre_generation_acceptance_floor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "planning_budget_report.json").write_text(
+                json.dumps(
+                    {
+                        "effective_positive_targets": {"train": 24},
+                        "effective_hard_negative_targets": {"train": 48},
+                        "minimum_positive_targets": {"train": 8},
+                        "minimum_hard_negative_targets": {"train": 16},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            session = object.__new__(TargetedDiagnosticDatasetSession)
+            session.output_dir = root
+            session.targeted_preflight_report = {
+                "positive_support_targets": {"train": 24},
+                "hard_negative_support_targets": {"train": 48},
+                "minimum_positive_support_targets": {"train": 1},
+                "minimum_hard_negative_support_targets": {"train": 1},
+            }
+            with self.assertRaisesRegex(RuntimeError, "differs from"):
+                session._support_target_contract()
+
+    def test_static_failure_never_starts_exhaustive_replay(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            session = object.__new__(TargetedDiagnosticDatasetSession)
+            session.output_dir = Path(temporary)
+            legacy_report = session.output_dir / "validation_report.json"
+            legacy_report.write_text(
+                '{"exhaustive_replay":{"valid":true}}', encoding="utf-8"
+            )
+            replay_started = []
+            session.validate_static_dataset_v1_1 = lambda: {
+                "schema_version": "1.1.2",
+                "valid": False,
+                "blockers": ["minimum independent support is not satisfied"],
+            }
+            session._exhaustive_sequential_replay = lambda: replay_started.append(
+                True
+            )
+            report = session.validate_dataset_v1_1(raise_on_failure=False)
+            self.assertFalse(report["valid"])
+            self.assertTrue(report["exhaustive_replay"]["skipped"])
+            self.assertEqual(replay_started, [])
+            self.assertEqual(
+                legacy_report.read_text(encoding="utf-8"),
+                '{"exhaustive_replay":{"valid":true}}',
+            )
+            self.assertTrue(
+                (session.output_dir / "validation_attempt_report.json").is_file()
+            )
+
+    def test_static_gate_inputs_must_match_an_intact_artifact_index(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            required = (
+                "planning_budget_report.json",
+                "targeted_preflight_report.json",
+                "state_schema.json",
+                "episodes.parquet",
+                "events.parquet",
+                "release_outcomes.parquet",
+                "transition_index.parquet",
+                "splits.json",
+                "branching_pairs.parquet",
+            )
+            records = []
+            for index, name in enumerate(required):
+                path = root / name
+                path.write_bytes(f"artifact-{index}".encode())
+                records.append(
+                    {
+                        "path": name,
+                        "size_bytes": path.stat().st_size,
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    }
+                )
+            (root / "artifact_index.json").write_text(
+                json.dumps({"artifacts": records}), encoding="utf-8"
+            )
+            session = object.__new__(TargetedDiagnosticDatasetSession)
+            session.output_dir = root
+            session.transition_path = root / "transition_dataset.h5"
+            self.assertTrue(session._static_source_integrity()["valid"])
+            (root / "episodes.parquet").write_bytes(b"changed")
+            rejected = session._static_source_integrity()
+            self.assertFalse(rejected["valid"])
+            self.assertEqual(rejected["failures"][0]["path"], "episodes.parquet")
+
+    def test_preserved_index_recovers_support_provenance_after_torn_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            transition = root / "transition_dataset.h5"
+            transition.write_bytes(b"transition")
+            report = root / "validation_report.json"
+            report.write_text("{}", encoding="utf-8")
+            budget = root / "planning_budget_report.json"
+            budget.write_text('{"minimum_positive_targets":{"train":8}}')
+            preflight = root / "targeted_preflight_report.json"
+            preflight.write_text('{"protocol_plan_sha256":"plan"}')
+
+            def record(path):
+                return {
+                    "path": path.name,
+                    "size_bytes": path.stat().st_size,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+
+            transition_record = record(transition)
+            report_record = record(report)
+            index = root / "artifact_index.json"
+            index.write_text(
+                json.dumps(
+                    {
+                        "artifacts": [
+                            transition_record,
+                            report_record,
+                            record(budget),
+                            record(preflight),
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            session = object.__new__(TargetedDiagnosticDatasetSession)
+            session.output_dir = root
+            session.transition_path = transition
+            cache = {
+                "source": "indexed_legacy_validation_report",
+                "transition_store_sha256": transition_record["sha256"],
+                "checks": {"valid": True},
+                "legacy_evidence": {
+                    "validation_report_sha256": report_record["sha256"],
+                    "validation_report_record": report_record,
+                    "artifact_index_sha256": hashlib.sha256(
+                        index.read_bytes()
+                    ).hexdigest(),
+                    "transition_store_record": transition_record,
+                },
+            }
+            session._preserve_legacy_replay_evidence(cache)
+            index.write_text("{", encoding="utf-8")
+            self.assertTrue(session._support_target_provenance_valid())
+            budget.write_text('{"minimum_positive_targets":{"train":1}}')
+            self.assertFalse(session._support_target_provenance_valid())
+
+    def test_atomic_fresh_replay_checkpoint_survives_before_final_index(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            transition = root / "transition_dataset.h5"
+            transition.write_bytes(b"immutable-transition-store")
+            transition_sha = hashlib.sha256(transition.read_bytes()).hexdigest()
+            checkpoint = {
+                "checkpoint_kind": "fresh_exhaustive_replay_complete_v1",
+                "schema_version": "1.1.2",
+                "teacher_commit": "074c4666300a8ad246601dab179a97a6942f0f29",
+                "canonical_state_layout_sha256": "layout-sha",
+                "protocol_plan_sha256": "plan-sha",
+                "transition_store_sha256": transition_sha,
+                "structural": {"valid": True},
+                "exhaustive_replay": {
+                    "valid": True,
+                    "replayed_transition_count": 3,
+                    "failure_count": 0,
+                    "failures": [],
+                    "maximum_error": 3.0e-6,
+                    "tolerance": 1.0e-5,
+                },
+            }
+            (root / "exhaustive_replay_checkpoint.json").write_text(
+                json.dumps(checkpoint), encoding="utf-8"
+            )
+            (root / "targeted_preflight_report.json").write_text(
+                json.dumps({"protocol_plan_sha256": "plan-sha"}),
+                encoding="utf-8",
+            )
+
+            class FakeHandle:
+                attrs = {"transition_count": 3}
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return None
+
+            session = object.__new__(TargetedDiagnosticDatasetSession)
+            session.output_dir = root
+            session.transition_path = transition
+            session.targeted_preflight_report = {}
+            session.state_schema = {
+                "canonical_state_layout_sha256": "layout-sha"
+            }
+            fake_h5py = types.SimpleNamespace(
+                File=lambda *args, **kwargs: FakeHandle()
+            )
+            with patch.dict(sys.modules, {"h5py": fake_h5py}):
+                cached = session._verified_replay_cache()
+                self.assertTrue(cached["valid"])
+                self.assertEqual(
+                    cached["source"], "atomic_fresh_replay_checkpoint"
+                )
+                transition.write_bytes(b"changed")
+                rejected = session._verified_replay_cache()
+            self.assertFalse(rejected["valid"])
+
+    def test_completed_replay_is_reused_only_for_the_indexed_hdf5(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            transition = root / "transition_dataset.h5"
+            transition.write_bytes(b"immutable-transition-store")
+            previous = {
+                "schema_version": "1.1.2",
+                "teacher_commit": (
+                    "074c4666300a8ad246601dab179a97a6942f0f29"
+                ),
+                "structural": {"valid": True, "transition_count": 3},
+                "exhaustive_replay": {
+                    "valid": True,
+                    "replayed_transition_count": 3,
+                    "failure_count": 0,
+                    "maximum_error": 3.0e-6,
+                    "tolerance": 1.0e-5,
+                },
+            }
+            report_path = root / "validation_report.json"
+            report_path.write_text(json.dumps(previous), encoding="utf-8")
+
+            def digest(path):
+                return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+            (root / "artifact_index.json").write_text(
+                json.dumps(
+                    {
+                        "artifacts": [
+                            {
+                                "path": transition.name,
+                                "size_bytes": transition.stat().st_size,
+                                "sha256": digest(transition),
+                            },
+                            {
+                                "path": report_path.name,
+                                "size_bytes": report_path.stat().st_size,
+                                "sha256": digest(report_path),
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            class FakeHandle:
+                attrs = {"transition_count": 3}
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return None
+
+            fake_h5py = types.SimpleNamespace(File=lambda *args, **kwargs: FakeHandle())
+            session = object.__new__(TargetedDiagnosticDatasetSession)
+            session.output_dir = root
+            session.transition_path = transition
+            with patch.dict(sys.modules, {"h5py": fake_h5py}):
+                cached = session._verified_replay_cache()
+                self.assertTrue(cached["valid"])
+                self.assertEqual(
+                    cached["source"], "indexed_legacy_validation_report"
+                )
+                preserved = session._preserve_legacy_replay_evidence(cached)
+                self.assertEqual(
+                    preserved["validation_report_sha256"], digest(report_path)
+                )
+                self.assertTrue(
+                    (
+                        root
+                        / "provenance"
+                        / "legacy_replay_evidence"
+                        / "validation_report.legacy.json"
+                    ).is_file()
+                )
+                (root / "exhaustive_replay_attestation.json").write_text(
+                    json.dumps(
+                        {
+                            **previous,
+                            "transition_store_sha256": digest(transition),
+                            "canonical_state_layout_sha256": "layout-sha",
+                            "protocol_plan_sha256": "plan-sha",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                session.state_schema = {
+                    "canonical_state_layout_sha256": "layout-sha"
+                }
+                (root / "targeted_preflight_report.json").write_text(
+                    json.dumps({"protocol_plan_sha256": "plan-sha"}),
+                    encoding="utf-8",
+                )
+                unindexed = session._verified_replay_cache()
+                self.assertTrue(unindexed["valid"])
+                self.assertEqual(
+                    unindexed["source"], "preserved_legacy_validation_report"
+                )
+                (root / "artifact_index.json").unlink()
+                report_path.unlink()
+                preserved_cached = session._verified_replay_cache()
+                self.assertTrue(preserved_cached["valid"])
+                self.assertEqual(
+                    preserved_cached["source"],
+                    "preserved_legacy_validation_report",
+                )
+                attestation_path = root / "exhaustive_replay_attestation.json"
+                (root / "artifact_index.json").write_text(
+                    json.dumps(
+                        {
+                            "artifacts": [
+                                {
+                                    "path": transition.name,
+                                    "size_bytes": transition.stat().st_size,
+                                    "sha256": digest(transition),
+                                },
+                                {
+                                    "path": attestation_path.name,
+                                    "size_bytes": attestation_path.stat().st_size,
+                                    "sha256": digest(attestation_path),
+                                },
+                            ]
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                attested = session._verified_replay_cache()
+                self.assertTrue(attested["valid"])
+                self.assertEqual(attested["source"], "replay_attestation")
+                transition.write_bytes(b"changed-transition-store")
+                rejected = session._verified_replay_cache()
+            self.assertFalse(rejected["valid"])
+            self.assertIn("changed", rejected["reason"])
 
 
 if __name__ == "__main__":

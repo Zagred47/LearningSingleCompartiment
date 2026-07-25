@@ -271,3 +271,38 @@ def validate_minimum_support(
                     }
                 )
     return {"valid": not failures, "targets": targets, "failures": failures}
+
+
+def validate_support_contract(
+    support: Mapping[str, Mapping[str, Mapping[str, int]]],
+    *,
+    minimum_positive_targets: Mapping[str, int],
+    minimum_hard_negative_targets: Mapping[str, int],
+    planned_positive_targets: Mapping[str, int],
+    planned_hard_negative_targets: Mapping[str, int],
+) -> Dict[str, Any]:
+    """Separate the acceptance floor from the planner's nominal quota.
+
+    Biological recipes are selected from a finite pilot and their realized
+    labels can change under new Random123 seeds.  Consequently, the quota used
+    to size a plan is an attainment target, while ``minimum_*`` is the hard
+    scientific acceptance gate.  Treating the two as the same contract makes
+    an otherwise valid diagnostic dataset fail after a single stochastic
+    label flip.
+    """
+
+    minimum = validate_minimum_support(
+        support,
+        positive_targets=minimum_positive_targets,
+        hard_negative_targets=minimum_hard_negative_targets,
+    )
+    planned = validate_minimum_support(
+        support,
+        positive_targets=planned_positive_targets,
+        hard_negative_targets=planned_hard_negative_targets,
+    )
+    return {
+        "valid": bool(minimum["valid"]),
+        "minimum_support_validation": minimum,
+        "planned_target_attainment": planned,
+    }

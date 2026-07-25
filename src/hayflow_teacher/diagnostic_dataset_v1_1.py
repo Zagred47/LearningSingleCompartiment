@@ -6,6 +6,9 @@ import json
 import time
 import hashlib
 import math
+import os
+import shutil
+import tempfile
 from collections import Counter
 from dataclasses import replace
 from pathlib import Path
@@ -22,6 +25,7 @@ from ..hayflow_data import (
     summarize_independent_support,
     validate_hdf5_store,
     validate_minimum_support,
+    validate_support_contract,
     TargetedRecipe,
     action_schedule_from_json,
     select_adaptive_recipe_brackets,
@@ -334,6 +338,95 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         self.targeted_recipe_catalog: List[TargetedRecipe] = []
         self.snapshot_bank: Dict[str, Dict[str, Any]] = {}
         self._preserve_raw_bap_events = False
+
+    def _support_target_contract(self) -> Dict[str, Any]:
+        """Load planned quotas and hard acceptance floors from artifacts.
+
+        The fallback to the legacy preflight keys keeps an already generated
+        1.1.2 artifact readable.  New runs persist both concepts explicitly.
+        """
+
+        preflight = dict(self.targeted_preflight_report)
+        preflight_path = self.output_dir / "targeted_preflight_report.json"
+        if preflight_path.is_file():
+            persisted_preflight = json.loads(
+                preflight_path.read_text(encoding="utf-8")
+            )
+            if (
+                preflight
+                and preflight.get("protocol_plan_sha256")
+                != persisted_preflight.get("protocol_plan_sha256")
+            ):
+                raise RuntimeError(
+                    "in-memory and persisted protocol plan hashes differ"
+                )
+            preflight = persisted_preflight
+
+        budget_path = self.output_dir / "planning_budget_report.json"
+        if not budget_path.is_file():
+            raise RuntimeError(
+                "pre-generation planning_budget_report.json is required"
+            )
+        budget = json.loads(budget_path.read_text(encoding="utf-8"))
+
+        def budget_map(name: str) -> Dict[str, int]:
+            value = budget.get(name)
+            if not value:
+                raise RuntimeError(f"planning budget is missing {name}")
+            return {
+                str(split): int(target)
+                for split, target in dict(value).items()
+            }
+
+        planned_positive = budget_map("effective_positive_targets")
+        planned_negative = budget_map("effective_hard_negative_targets")
+        minimum_positive = budget_map("minimum_positive_targets")
+        minimum_negative = budget_map("minimum_hard_negative_targets")
+
+        preflight_comparisons = {
+            "positive_support_targets": planned_positive,
+            "hard_negative_support_targets": planned_negative,
+            "planned_positive_support_targets": planned_positive,
+            "planned_hard_negative_support_targets": planned_negative,
+            "minimum_positive_support_targets": minimum_positive,
+            "minimum_hard_negative_support_targets": minimum_negative,
+        }
+        for name, expected in preflight_comparisons.items():
+            observed = preflight.get(name)
+            if observed is not None and {
+                str(split): int(target)
+                for split, target in dict(observed).items()
+            } != expected:
+                raise RuntimeError(
+                    f"targeted preflight {name} differs from the planning budget"
+                )
+        split_sets = {
+            tuple(sorted(values))
+            for values in (
+                planned_positive,
+                planned_negative,
+                minimum_positive,
+                minimum_negative,
+            )
+        }
+        if len(split_sets) != 1:
+            raise RuntimeError("support target maps use different split sets")
+        for split in planned_positive:
+            if minimum_positive[split] > planned_positive[split]:
+                raise RuntimeError(
+                    f"minimum positive support exceeds planned quota for {split}"
+                )
+            if minimum_negative[split] > planned_negative[split]:
+                raise RuntimeError(
+                    f"minimum hard-negative support exceeds planned quota for {split}"
+                )
+        return {
+            "support_acceptance_policy_version": 2,
+            "planned_positive": planned_positive,
+            "planned_hard_negative": planned_negative,
+            "minimum_positive": minimum_positive,
+            "minimum_hard_negative": minimum_negative,
+        }
 
     @staticmethod
     def _protocol_plan_sha256(
@@ -2273,6 +2366,16 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         manifest["storage_report"] = "storage_report.json"
         manifest["table_report"] = table_report
         write_json(self.output_dir / "dataset_manifest.json", manifest)
+        print(
+            "[HayFlow][integrità] indicizzazione atomica degli artefatti "
+            "generati...",
+            flush=True,
+        )
+        self._write_artifact_index()
+        print(
+            "[HayFlow][integrità] indice di generazione completato.",
+            flush=True,
+        )
         return manifest
 
     def _bind_protocol_registry(
@@ -2402,17 +2505,19 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                 }
             )
         support = summarize_independent_support(episodes)
-        effective_positive_targets = self.targeted_preflight_report.get(
-            "positive_support_targets"
-        )
-        effective_negative_targets = self.targeted_preflight_report.get(
-            "hard_negative_support_targets"
-        )
-        support_validation = validate_minimum_support(
+        support_targets = self._support_target_contract()
+        support_contract = validate_support_contract(
             support,
-            positive_targets=effective_positive_targets,
-            hard_negative_targets=effective_negative_targets,
+            minimum_positive_targets=support_targets["minimum_positive"],
+            minimum_hard_negative_targets=support_targets[
+                "minimum_hard_negative"
+            ],
+            planned_positive_targets=support_targets["planned_positive"],
+            planned_hard_negative_targets=support_targets[
+                "planned_hard_negative"
+            ],
         )
+        support_validation = support_contract["minimum_support_validation"]
         release_success = Counter(
             (
                 str(row["synapse_type"]),
@@ -2636,6 +2741,29 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
             "episode_count": len(episodes),
             "support": support,
             "support_validation": support_validation,
+            "minimum_support_validation": support_validation,
+            "planned_target_attainment": support_contract[
+                "planned_target_attainment"
+            ],
+            "support_acceptance_policy": {
+                "version": support_targets[
+                    "support_acceptance_policy_version"
+                ],
+                "hard_gate": "pre_registered_minimum_diagnostic",
+                "planned_quota_role": "non_blocking_attainment_report",
+                "minimum_positive_targets": support_targets[
+                    "minimum_positive"
+                ],
+                "minimum_hard_negative_targets": support_targets[
+                    "minimum_hard_negative"
+                ],
+                "planned_positive_targets": support_targets[
+                    "planned_positive"
+                ],
+                "planned_hard_negative_targets": support_targets[
+                    "planned_hard_negative"
+                ],
+            },
             "release_outcomes": {
                 f"{kind}:{outcome}": count
                 for (kind, outcome), count in sorted(release_success.items())
@@ -2794,14 +2922,600 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         figure.savefig(figures / "branching_teacher_distance.png", dpi=180)
         plt.close(figure)
 
-    def validate_dataset_v1_1(self) -> Dict[str, Any]:
-        """Run structural, exhaustive replay, causal, support and split gates."""
+    @staticmethod
+    def _parquet_json_list(value: Any) -> List[Any]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            text = value.strip()
+            return list(json.loads(text)) if text else []
+        if isinstance(value, (list, tuple, set)):
+            return list(value)
+        if hasattr(value, "tolist"):
+            converted = value.tolist()
+            return converted if isinstance(converted, list) else [converted]
+        return [value]
 
-        structural = validate_hdf5_store(self.transition_path)
-        exhaustive = self._exhaustive_sequential_replay()
-        card = json.loads(
-            (self.output_dir / "dataset_card.json").read_text(encoding="utf-8")
+    @staticmethod
+    def _read_json_mapping(path: Path) -> Optional[Dict[str, Any]]:
+        """Read recovery metadata without letting a torn file abort fallback."""
+
+        try:
+            value = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None
+        return dict(value) if isinstance(value, Mapping) else None
+
+    def _read_artifact_records(
+        self, path: Path
+    ) -> Dict[str, Dict[str, Any]]:
+        document = self._read_json_mapping(path)
+        if document is None:
+            return {}
+        try:
+            return {
+                str(row["path"]): dict(row)
+                for row in document.get("artifacts", [])
+            }
+        except (KeyError, TypeError, ValueError):
+            return {}
+
+    @staticmethod
+    def _artifact_record_matches(
+        path: Path, record: Optional[Mapping[str, Any]]
+    ) -> bool:
+        if not record or not Path(path).is_file():
+            return False
+        try:
+            return bool(
+                Path(path).stat().st_size == int(record.get("size_bytes", -1))
+                and sha256_file(Path(path)) == str(record.get("sha256", ""))
+            )
+        except (OSError, TypeError, ValueError):
+            return False
+
+    def _preserved_legacy_bundle(self) -> Dict[str, Any]:
+        """Return the preserved proof only when its manifest still anchors it."""
+
+        destination = self.output_dir / "provenance" / "legacy_replay_evidence"
+        manifest_path = destination / "import_manifest.json"
+        index_path = destination / "artifact_index.legacy.json"
+        report_path = destination / "validation_report.legacy.json"
+        manifest = self._read_json_mapping(manifest_path)
+        if manifest is None or not index_path.is_file() or not report_path.is_file():
+            return {}
+        expected_index_sha = str(manifest.get("artifact_index_sha256", ""))
+        expected_report_sha = str(manifest.get("validation_report_sha256", ""))
+        if not expected_index_sha or not expected_report_sha:
+            return {}
+        if sha256_file(index_path) != expected_index_sha:
+            return {}
+        if sha256_file(report_path) != expected_report_sha:
+            return {}
+        records = self._read_artifact_records(index_path)
+        relative_transition = self.transition_path.relative_to(
+            self.output_dir
+        ).as_posix()
+        transition_record = records.get(relative_transition)
+        report_record = records.get("validation_report.json")
+        if not transition_record or not report_record:
+            return {}
+        if not self._artifact_record_matches(report_path, report_record):
+            return {}
+        if expected_report_sha != str(report_record.get("sha256", "")):
+            return {}
+        if str(manifest.get("transition_store_sha256", "")) != str(
+            transition_record.get("sha256", "")
+        ):
+            return {}
+        recorded_transition = manifest.get("transition_store_record")
+        if recorded_transition and canonical_json_sha256(
+            {"record": recorded_transition}
+        ) != canonical_json_sha256({"record": transition_record}):
+            return {}
+        return {
+            "manifest": manifest,
+            "manifest_path": manifest_path,
+            "artifact_index_path": index_path,
+            "validation_report_path": report_path,
+            "records": records,
+            "transition_record": dict(transition_record),
+            "validation_report_record": dict(report_record),
+        }
+
+    def _artifact_record_candidates(
+        self,
+    ) -> List[Tuple[str, Dict[str, Dict[str, Any]]]]:
+        candidates: List[Tuple[str, Dict[str, Dict[str, Any]]]] = []
+        root_records = self._read_artifact_records(
+            self.output_dir / "artifact_index.json"
         )
+        if root_records:
+            candidates.append(("root_artifact_index", root_records))
+        preserved = self._preserved_legacy_bundle()
+        if preserved:
+            candidates.append(
+                ("preserved_legacy_artifact_index", preserved["records"])
+            )
+        return candidates
+
+    def _artifact_records(self) -> Dict[str, Dict[str, Any]]:
+        candidates = self._artifact_record_candidates()
+        return candidates[0][1] if candidates else {}
+
+    def _trusted_artifact_records(
+        self, required_paths: Sequence[str]
+    ) -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
+        for source, records in self._artifact_record_candidates():
+            if all(path in records for path in required_paths):
+                return source, records
+        return None, {}
+
+    def _static_source_integrity(self) -> Dict[str, Any]:
+        """Bind every cheap-gate input to a complete artifact index."""
+
+        required = (
+            "planning_budget_report.json",
+            "targeted_preflight_report.json",
+            "state_schema.json",
+            "episodes.parquet",
+            "events.parquet",
+            "release_outcomes.parquet",
+            "transition_index.parquet",
+            "splits.json",
+            "branching_pairs.parquet",
+        )
+        source, records = self._trusted_artifact_records(required)
+        failures = []
+        if source is None:
+            failures.append(
+                {
+                    "reason": "no complete intact artifact index",
+                    "required_paths": list(required),
+                }
+            )
+        else:
+            for relative in required:
+                path = self.output_dir / relative
+                record = records[relative]
+                if not path.is_file():
+                    failures.append({"path": relative, "reason": "missing"})
+                    continue
+                observed_size = path.stat().st_size
+                expected_size = int(record.get("size_bytes", -1))
+                if observed_size != expected_size:
+                    failures.append(
+                        {
+                            "path": relative,
+                            "reason": "size changed",
+                            "expected": expected_size,
+                            "observed": observed_size,
+                        }
+                    )
+                    continue
+                observed_sha = sha256_file(path)
+                expected_sha = str(record.get("sha256", ""))
+                if observed_sha != expected_sha:
+                    failures.append(
+                        {
+                            "path": relative,
+                            "reason": "sha256 changed",
+                            "expected": expected_sha,
+                            "observed": observed_sha,
+                        }
+                    )
+        return {
+            "valid": not failures,
+            "artifact_index_source": source,
+            "required_paths": list(required),
+            "failures": failures,
+        }
+
+    def _support_target_provenance_valid(self) -> bool:
+        """Verify pre-registered floors when re-certifying an old artifact."""
+
+        required = (
+            "planning_budget_report.json",
+            "targeted_preflight_report.json",
+        )
+        source, records = self._trusted_artifact_records(required)
+        if source is None:
+            return False
+        for relative in required:
+            path = self.output_dir / relative
+            record = records[relative]
+            if (
+                not path.is_file()
+                or path.stat().st_size != int(record.get("size_bytes", -1))
+                or sha256_file(path) != str(record.get("sha256", ""))
+            ):
+                return False
+        return True
+
+    def _verified_replay_cache(self) -> Dict[str, Any]:
+        """Reuse a completed replay only when it is bound to this exact HDF5."""
+
+        if not self.transition_path.is_file():
+            return {"valid": False, "reason": "transition store is missing"}
+        relative_transition = self.transition_path.relative_to(
+            self.output_dir
+        ).as_posix()
+        root_index_path = self.output_dir / "artifact_index.json"
+        root_records = self._read_artifact_records(root_index_path)
+        attestation_path = self.output_dir / "exhaustive_replay_attestation.json"
+        attestation_record = root_records.get(
+            "exhaustive_replay_attestation.json"
+        )
+        indexed_attestation = self._artifact_record_matches(
+            attestation_path, attestation_record
+        )
+        legacy_evidence: Dict[str, Any] = {}
+        source: Optional[Dict[str, Any]] = None
+        source_kind: Optional[str] = None
+        if indexed_attestation:
+            source = self._read_json_mapping(attestation_path)
+            if source is not None:
+                source_kind = "replay_attestation"
+
+        preserved = self._preserved_legacy_bundle()
+        if source is None and preserved:
+            report_path = preserved["validation_report_path"]
+            previous = self._read_json_mapping(report_path)
+            if previous is not None:
+                transition_record = preserved["transition_record"]
+                report_record = preserved["validation_report_record"]
+                source = {
+                    "schema_version": previous.get("schema_version"),
+                    "teacher_commit": previous.get("teacher_commit"),
+                    "transition_store_sha256": transition_record["sha256"],
+                    "structural": previous.get("structural", {}),
+                    "exhaustive_replay": previous.get(
+                        "exhaustive_replay", {}
+                    ),
+                }
+                source_kind = "preserved_legacy_validation_report"
+                legacy_evidence = {
+                    "validation_report_sha256": str(
+                        report_record["sha256"]
+                    ),
+                    "validation_report_record": dict(report_record),
+                    "artifact_index_sha256": str(
+                        preserved["manifest"]["artifact_index_sha256"]
+                    ),
+                    "transition_store_record": dict(transition_record),
+                }
+
+        if source is None and root_records:
+            report_path = self.output_dir / "validation_report.json"
+            transition_record = root_records.get(relative_transition)
+            report_record = root_records.get("validation_report.json")
+            root_report_intact = bool(
+                transition_record
+                and report_record
+                and report_path.is_file()
+                and self.transition_path.stat().st_size
+                == int(transition_record.get("size_bytes", -1))
+                and report_path.stat().st_size
+                == int(report_record.get("size_bytes", -1))
+                and sha256_file(report_path)
+                == str(report_record.get("sha256", ""))
+            )
+            if root_report_intact:
+                previous = self._read_json_mapping(report_path)
+                if previous is not None:
+                    source = {
+                        "schema_version": previous.get("schema_version"),
+                        "teacher_commit": previous.get("teacher_commit"),
+                        "transition_store_sha256": transition_record["sha256"],
+                        "structural": previous.get("structural", {}),
+                        "exhaustive_replay": previous.get(
+                            "exhaustive_replay", {}
+                        ),
+                    }
+                    source_kind = "indexed_legacy_validation_report"
+                    legacy_evidence = {
+                        "validation_report_sha256": str(
+                            report_record["sha256"]
+                        ),
+                        "validation_report_record": dict(report_record),
+                        "artifact_index_sha256": sha256_file(root_index_path),
+                        "transition_store_record": dict(transition_record),
+                    }
+
+        checkpoint_path = self.output_dir / "exhaustive_replay_checkpoint.json"
+        if source is None and checkpoint_path.is_file():
+            checkpoint = self._read_json_mapping(checkpoint_path)
+            if checkpoint and checkpoint.get("checkpoint_kind") == (
+                "fresh_exhaustive_replay_complete_v1"
+            ):
+                source = checkpoint
+                source_kind = "atomic_fresh_replay_checkpoint"
+
+        if source is None or source_kind is None:
+            return {
+                "valid": False,
+                "reason": (
+                    "no intact indexed, preserved, or atomic replay proof"
+                ),
+            }
+
+        transition_sha256 = sha256_file(self.transition_path)
+        if str(source.get("transition_store_sha256")) != transition_sha256:
+            return {
+                "valid": False,
+                "reason": "attested transition store hash changed",
+            }
+
+        structural = dict(source.get("structural", {}))
+        exhaustive = dict(source.get("exhaustive_replay", {}))
+        try:
+            import h5py
+
+            with h5py.File(self.transition_path, "r") as handle:
+                transition_count = int(handle.attrs["transition_count"])
+            checks = {
+                "schema_matches": str(source.get("schema_version"))
+                == TARGETED_DATASET_SCHEMA_VERSION,
+                "teacher_matches": str(source.get("teacher_commit"))
+                == PINNED_TEACHER_COMMIT,
+                "transition_hash_matches": str(
+                    source.get("transition_store_sha256")
+                )
+                == transition_sha256,
+                "structural_valid": bool(structural.get("valid")),
+                "replay_valid": bool(exhaustive.get("valid")),
+                "replay_complete": int(
+                    exhaustive.get("replayed_transition_count", -1)
+                )
+                == transition_count,
+                "replay_has_no_failures": int(
+                    exhaustive.get("failure_count", -1)
+                )
+                == 0,
+                "replay_failure_list_empty": not exhaustive.get(
+                    "failures", []
+                ),
+                "declared_tolerance_is_not_relaxed": float(
+                    exhaustive.get("tolerance", math.inf)
+                )
+                <= 1.0e-5,
+                "replay_within_fixed_tolerance": float(
+                    exhaustive.get("maximum_error", math.inf)
+                )
+                <= 1.0e-5,
+            }
+        except (ImportError, KeyError, OSError, TypeError, ValueError) as error:
+            return {
+                "valid": False,
+                "reason": f"cached replay proof is malformed: {error}",
+            }
+
+        if source_kind in {
+            "replay_attestation",
+            "atomic_fresh_replay_checkpoint",
+        }:
+            checks["state_layout_matches"] = str(
+                source.get("canonical_state_layout_sha256")
+            ) == str(self.state_schema["canonical_state_layout_sha256"])
+            preflight_path = self.output_dir / "targeted_preflight_report.json"
+            current_preflight = self._read_json_mapping(preflight_path) or dict(
+                self.targeted_preflight_report
+            )
+            checks["protocol_plan_matches"] = str(
+                source.get("protocol_plan_sha256")
+            ) == str(current_preflight.get("protocol_plan_sha256"))
+        return {
+            "valid": all(checks.values()),
+            "reason": None if all(checks.values()) else "cached replay checks failed",
+            "source": source_kind,
+            "checks": checks,
+            "transition_store_sha256": transition_sha256,
+            "transition_count": transition_count,
+            "structural": structural,
+            "exhaustive_replay": exhaustive,
+            "legacy_evidence": legacy_evidence,
+        }
+
+    @staticmethod
+    def _atomic_copy_with_sha256(
+        source: Path, target: Path, expected_sha256: str
+    ) -> None:
+        """Copy recovery evidence without leaving a partial destination."""
+
+        source = Path(source)
+        target = Path(target)
+        if target.is_file() and sha256_file(target) == expected_sha256:
+            return
+        if not source.is_file() or sha256_file(source) != expected_sha256:
+            raise RuntimeError(f"legacy replay source changed: {source}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            shutil.copy2(source, temporary)
+            if sha256_file(temporary) != expected_sha256:
+                raise RuntimeError(
+                    f"failed to preserve legacy replay evidence: {source}"
+                )
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _preserve_legacy_replay_evidence(
+        self, cache: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        """Copy the indexed legacy proof before replacing root metadata."""
+
+        if cache.get("source") == "preserved_legacy_validation_report":
+            bundle = self._preserved_legacy_bundle()
+            if not bundle:
+                raise RuntimeError("preserved legacy replay evidence is invalid")
+            return dict(bundle["manifest"])
+        if cache.get("source") != "indexed_legacy_validation_report":
+            return {}
+        evidence = dict(cache.get("legacy_evidence", {}))
+        destination = self.output_dir / "provenance" / "legacy_replay_evidence"
+        destination.mkdir(parents=True, exist_ok=True)
+        copies = (
+            (
+                self.output_dir / "validation_report.json",
+                destination / "validation_report.legacy.json",
+                str(evidence["validation_report_sha256"]),
+            ),
+            (
+                self.output_dir / "artifact_index.json",
+                destination / "artifact_index.legacy.json",
+                str(evidence["artifact_index_sha256"]),
+            ),
+        )
+        for source, target, expected_sha256 in copies:
+            self._atomic_copy_with_sha256(source, target, expected_sha256)
+        manifest = {
+            "schema_version": TARGETED_DATASET_SCHEMA_VERSION,
+            "source": str(cache["source"]),
+            "transition_store_sha256": str(
+                cache["transition_store_sha256"]
+            ),
+            "cache_checks": dict(cache.get("checks", {})),
+            **evidence,
+            "preserved_validation_report": (
+                "provenance/legacy_replay_evidence/"
+                "validation_report.legacy.json"
+            ),
+            "preserved_artifact_index": (
+                "provenance/legacy_replay_evidence/"
+                "artifact_index.legacy.json"
+            ),
+        }
+        write_json(destination / "import_manifest.json", manifest)
+        return manifest
+
+    def _release_identifiability_pairs_from_store(
+        self,
+        episode_rows: Sequence[Mapping[str, Any]],
+        transition_rows: Sequence[Mapping[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Recompute the RNG-isolation pairs from indexed HDF5 input views."""
+
+        import h5py
+
+        contracts: Dict[str, List[Mapping[str, Any]]] = {}
+        for row in episode_rows:
+            pair_id = row.get("release_pair_id")
+            try:
+                missing = pair_id is None or bool(self.pd.isna(pair_id))
+            except (TypeError, ValueError):
+                missing = pair_id is None
+            if not missing:
+                contracts.setdefault(str(pair_id), []).append(row)
+        transition_ids: Dict[str, List[int]] = {}
+        for row in transition_rows:
+            transition_ids.setdefault(str(row["trajectory_id"]), []).append(
+                int(row["transition_id"])
+            )
+        results = []
+        errors = []
+        with h5py.File(self.transition_path, "r") as handle:
+            for pair_id, pair in sorted(contracts.items()):
+                if len(pair) != 2:
+                    errors.append(
+                        {
+                            "release_pair_id": pair_id,
+                            "reason": "pair must contain exactly two episodes",
+                            "episode_count": len(pair),
+                        }
+                    )
+                    continue
+                left, right = pair
+                left_ids = sorted(
+                    transition_ids.get(str(left["trajectory_id"]), [])
+                )
+                right_ids = sorted(
+                    transition_ids.get(str(right["trajectory_id"]), [])
+                )
+                if not left_ids or not right_ids:
+                    errors.append(
+                        {
+                            "release_pair_id": pair_id,
+                            "reason": "transition index is incomplete",
+                        }
+                    )
+                    continue
+                left_inputs = [
+                    json.loads(handle["inputs/U_scheduled_json"][index])
+                    for index in left_ids
+                ]
+                right_inputs = [
+                    json.loads(handle["inputs/U_scheduled_json"][index])
+                    for index in right_ids
+                ]
+                left_realized = [
+                    json.loads(handle["inputs/U_realized_json"][index])
+                    for index in left_ids
+                ]
+                right_realized = [
+                    json.loads(handle["inputs/U_realized_json"][index])
+                    for index in right_ids
+                ]
+                results.append(
+                    {
+                        "release_pair_id": pair_id,
+                        "same_snapshot": str(left["snapshot_id"])
+                        == str(right["snapshot_id"]),
+                        "different_seed": int(left["seed"])
+                        != int(right["seed"]),
+                        "same_scheduled_input": canonical_json_sha256(
+                            {"rows": left_inputs}
+                        )
+                        == canonical_json_sha256({"rows": right_inputs}),
+                        "release_outcomes_differ": canonical_json_sha256(
+                            {"rows": left_realized}
+                        )
+                        != canonical_json_sha256({"rows": right_realized}),
+                    }
+                )
+        return results, errors
+
+    def validate_static_dataset_v1_1(self) -> Dict[str, Any]:
+        """Run all inexpensive acceptance gates before any state replay."""
+
+        static_integrity = self._static_source_integrity()
+        if not static_integrity["valid"]:
+            report = {
+                "schema_version": TARGETED_DATASET_SCHEMA_VERSION,
+                "valid": False,
+                "blockers": ["static source artifact integrity failed"],
+                "warnings": [],
+                "validation_phase": "static_integrity_rejected",
+                "static_source_integrity": static_integrity,
+                "minimum_support_validation": {"valid": False, "skipped": True},
+                "planned_target_attainment": {"valid": False, "skipped": True},
+                "teacher_commit": PINNED_TEACHER_COMMIT,
+            }
+            write_json(self.output_dir / "static_validation_report.json", report)
+            return report
+
+        card = self._read_json_mapping(self.output_dir / "dataset_card.json")
+        if card is None:
+            report = {
+                "schema_version": TARGETED_DATASET_SCHEMA_VERSION,
+                "valid": False,
+                "blockers": ["dataset card is missing or malformed"],
+                "warnings": [],
+                "validation_phase": "static_metadata_rejected",
+                "static_source_integrity": static_integrity,
+                "minimum_support_validation": {"valid": False, "skipped": True},
+                "planned_target_attainment": {"valid": False, "skipped": True},
+                "teacher_commit": PINNED_TEACHER_COMMIT,
+            }
+            write_json(self.output_dir / "static_validation_report.json", report)
+            return report
+        support_targets = self._support_target_contract()
         observed_splits = set(
             json.loads((self.output_dir / "splits.json").read_text(encoding="utf-8"))
         )
@@ -2830,6 +3544,56 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         episode_rows = self.pd.read_parquet(
             self.output_dir / "episodes.parquet"
         ).to_dict("records")
+        normalized_episodes = []
+        for row in episode_rows:
+            normalized_episodes.append(
+                {
+                    **row,
+                    "event_labels": self._parquet_json_list(
+                        row.get("event_labels")
+                    ),
+                    "hard_negative_for": self._parquet_json_list(
+                        row.get("hard_negative_for")
+                    ),
+                }
+            )
+        recomputed_support = summarize_independent_support(normalized_episodes)
+        support_contract = validate_support_contract(
+            recomputed_support,
+            minimum_positive_targets=support_targets["minimum_positive"],
+            minimum_hard_negative_targets=support_targets[
+                "minimum_hard_negative"
+            ],
+            planned_positive_targets=support_targets["planned_positive"],
+            planned_hard_negative_targets=support_targets[
+                "planned_hard_negative"
+            ],
+        )
+        support_index_consistent = canonical_json_sha256(
+            {"support": recomputed_support}
+        ) == canonical_json_sha256({"support": card.get("support", {})})
+        card["support_validation"] = support_contract[
+            "minimum_support_validation"
+        ]
+        card["minimum_support_validation"] = support_contract[
+            "minimum_support_validation"
+        ]
+        card["planned_target_attainment"] = support_contract[
+            "planned_target_attainment"
+        ]
+        card["support_acceptance_policy"] = {
+            "version": support_targets["support_acceptance_policy_version"],
+            "hard_gate": "pre_registered_minimum_diagnostic",
+            "planned_quota_role": "non_blocking_attainment_report",
+            "minimum_positive_targets": support_targets["minimum_positive"],
+            "minimum_hard_negative_targets": support_targets[
+                "minimum_hard_negative"
+            ],
+            "planned_positive_targets": support_targets["planned_positive"],
+            "planned_hard_negative_targets": support_targets[
+                "planned_hard_negative"
+            ],
+        }
         seed_splits: Dict[int, set] = {}
         snapshot_splits: Dict[str, set] = {}
         for row in episode_rows:
@@ -2879,30 +3643,62 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
             and bool(row.get("recovery_probe"))
             for row in recovery_rows
         )
-        release_pair_rows = card.get("release_identifiability_pairs", [])
-        release_identifiability_valid = bool(release_pair_rows) and all(
+        transition_rows = self.pd.read_parquet(
+            self.output_dir / "transition_index.parquet"
+        ).to_dict("records")
+        release_pair_rows, release_pair_errors = (
+            self._release_identifiability_pairs_from_store(
+                episode_rows, transition_rows
+            )
+        )
+        card["release_identifiability_pairs"] = release_pair_rows
+        release_identifiability_valid = (
+            not release_pair_errors
+            and bool(release_pair_rows)
+            and all(
             bool(row["same_snapshot"])
             and bool(row["different_seed"])
             and bool(row["same_scheduled_input"])
             and bool(row["release_outcomes_differ"])
             for row in release_pair_rows
+            )
         )
+        event_rows = self.pd.read_parquet(
+            self.output_dir / "events.parquet"
+        ).to_dict("records")
         uncensored_required = all(
             not bool(row.get("right_censored"))
-            for row in self.pd.read_parquet(self.output_dir / "events.parquet").to_dict(
-                "records"
-            )
+            for row in event_rows
             if row.get("kind") in {"calcium_spike", "nmda_plateau"}
         )
+        events_by_trajectory: Dict[str, set] = {}
+        for row in event_rows:
+            events_by_trajectory.setdefault(str(row["trajectory_id"]), set()).add(
+                str(row["kind"])
+            )
+        episode_event_mismatches = []
+        for row in normalized_episodes:
+            stored = set(map(str, row["event_labels"]))
+            observed = events_by_trajectory.get(str(row["trajectory_id"]), set())
+            if stored != observed:
+                episode_event_mismatches.append(
+                    {
+                        "trajectory_id": str(row["trajectory_id"]),
+                        "episode_labels": sorted(stored),
+                        "event_table_labels": sorted(observed),
+                    }
+                )
         blockers = []
-        if not structural["valid"]:
-            blockers.append("HDF5 structural validation failed")
-        if not exhaustive["valid"]:
-            blockers.append("exhaustive transition/release replay failed")
         if not release_valid:
             blockers.append("causal release contract failed")
-        if not card["support_validation"]["valid"]:
+        if not support_contract["minimum_support_validation"]["valid"]:
             blockers.append("minimum independent support is not satisfied")
+        if not self._support_target_provenance_valid():
+            blockers.append("pre-registered support target provenance is invalid")
+        if not support_index_consistent:
+            blockers.append("dataset card support differs from the episode index")
+        if episode_event_mismatches:
+            blockers.append("episode labels differ from the event index")
         if observed_splits != required_splits:
             blockers.append("required targeted split set is incomplete")
         if leaking_seeds:
@@ -2930,14 +3726,38 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
             }
         ):
             blockers.append("canonical state layout changed")
+        warnings = []
+        if (
+            support_contract["minimum_support_validation"]["valid"]
+            and not support_contract["planned_target_attainment"]["valid"]
+        ):
+            warnings.append(
+                "observed support is above the diagnostic acceptance floor but "
+                "below one or more nominal planning quotas"
+            )
         report = {
             "schema_version": TARGETED_DATASET_SCHEMA_VERSION,
             "valid": not blockers,
             "blockers": blockers,
-            "structural": structural,
-            "exhaustive_replay": exhaustive,
+            "warnings": warnings,
+            "validation_phase": "static_pre_replay",
+            "static_source_integrity": static_integrity,
             "causal_release_valid": release_valid,
-            "support": card["support_validation"],
+            "support": support_contract["minimum_support_validation"],
+            "minimum_support_validation": support_contract[
+                "minimum_support_validation"
+            ],
+            "planned_target_attainment": support_contract[
+                "planned_target_attainment"
+            ],
+            "support_acceptance_policy": card[
+                "support_acceptance_policy"
+            ],
+            "support_index_consistent": support_index_consistent,
+            "episode_event_index_mismatch_count": len(
+                episode_event_mismatches
+            ),
+            "episode_event_index_mismatches": episode_event_mismatches,
             "required_splits": sorted(required_splits),
             "observed_splits": sorted(observed_splits),
             "seed_split_leaks": leaking_seeds,
@@ -2946,14 +3766,191 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
             "branching_valid": branching_valid,
             "recovery_valid": recovery_valid,
             "release_identifiability_valid": release_identifiability_valid,
+            "release_identifiability_pair_errors": release_pair_errors,
             "uncensored_required_events": uncensored_required,
             "teacher_commit": PINNED_TEACHER_COMMIT,
             "segment_count": len(self.audit.live_segments),
             "state_layout_unchanged": "canonical state layout changed" not in blockers,
         }
+        self._validated_dataset_card = card
+        write_json(self.output_dir / "static_validation_report.json", report)
+        return report
+
+    def validate_dataset_v1_1(
+        self,
+        *,
+        reuse_verified_replay: bool = True,
+        raise_on_failure: bool = True,
+    ) -> Dict[str, Any]:
+        """Validate cheap gates first, then replay or reuse its hash-bound proof."""
+
+        static = self.validate_static_dataset_v1_1()
+        print(
+            "[HayFlow][validazione] gate statici "
+            + ("superati" if static["valid"] else "respinti")
+            + f"; blockers={len(static['blockers'])}; "
+            + "quota nominale="
+            + (
+                "raggiunta"
+                if static.get("planned_target_attainment", {}).get("valid", False)
+                else "non completamente raggiunta"
+            ),
+            flush=True,
+        )
+        if not static["valid"]:
+            report = {
+                **static,
+                "validation_phase": "static_rejected_before_replay",
+                "structural": {"valid": False, "skipped": True},
+                "exhaustive_replay": {"valid": False, "skipped": True},
+                "replay_cache": {"valid": False, "skipped": True},
+            }
+            # Never overwrite a legacy report that may contain the only
+            # completed replay proof.  Static attempts are append-only.
+            write_json(
+                self.output_dir / "validation_attempt_report.json", report
+            )
+            if raise_on_failure:
+                raise RuntimeError(
+                    f"diagnostic dataset v1.1 static validation failed: "
+                    f"{report['blockers']}"
+                )
+            return report
+
+        if reuse_verified_replay:
+            print(
+                "[HayFlow][validazione] verifica SHA-256 del transition store "
+                "per riusare il replay completato...",
+                flush=True,
+            )
+        cache = (
+            self._verified_replay_cache()
+            if reuse_verified_replay
+            else {"valid": False, "reason": "cache disabled"}
+        )
+        legacy_import: Dict[str, Any] = {}
+        if cache.get("valid"):
+            print(
+                "[HayFlow][validazione] replay esaustivo riutilizzato da "
+                f"{cache['source']}; nessuna risimulazione NEURON.",
+                flush=True,
+            )
+            structural = dict(cache["structural"])
+            exhaustive = dict(cache["exhaustive_replay"])
+            transition_sha256 = str(cache["transition_store_sha256"])
+            legacy_import = self._preserve_legacy_replay_evidence(cache)
+        else:
+            print(
+                "[HayFlow][validazione] replay certificato non riutilizzabile "
+                f"({cache.get('reason')}); avvio controllo strutturale e replay.",
+                flush=True,
+            )
+            structural = validate_hdf5_store(self.transition_path)
+            print(
+                "[HayFlow][validazione] calcolo SHA-256 prima del replay; "
+                "il risultato sarà salvato atomicamente appena completato...",
+                flush=True,
+            )
+            transition_sha256 = sha256_file(self.transition_path)
+            if structural["valid"]:
+                exhaustive = self._exhaustive_sequential_replay()
+                preflight_path = (
+                    self.output_dir / "targeted_preflight_report.json"
+                )
+                checkpoint_preflight = self._read_json_mapping(
+                    preflight_path
+                ) or dict(self.targeted_preflight_report)
+                checkpoint = {
+                    "checkpoint_kind": (
+                        "fresh_exhaustive_replay_complete_v1"
+                    ),
+                    "schema_version": TARGETED_DATASET_SCHEMA_VERSION,
+                    "teacher_commit": PINNED_TEACHER_COMMIT,
+                    "canonical_state_layout_sha256": self.state_schema[
+                        "canonical_state_layout_sha256"
+                    ],
+                    "protocol_plan_sha256": checkpoint_preflight.get(
+                        "protocol_plan_sha256"
+                    ),
+                    "transition_store_sha256": transition_sha256,
+                    "structural": structural,
+                    "exhaustive_replay": exhaustive,
+                }
+                write_json(
+                    self.output_dir / "exhaustive_replay_checkpoint.json",
+                    checkpoint,
+                )
+                print(
+                    "[HayFlow][validazione] replay salvato nel checkpoint "
+                    "atomico; un riavvio non richiederà la risimulazione.",
+                    flush=True,
+                )
+            else:
+                exhaustive = {
+                    "valid": False,
+                    "skipped": True,
+                    "reason": "HDF5 structural validation failed",
+                }
+
+        blockers = list(static["blockers"])
+        if not structural["valid"]:
+            blockers.append("HDF5 structural validation failed")
+        if not exhaustive["valid"]:
+            blockers.append("exhaustive transition/release replay failed")
+        preflight_path = self.output_dir / "targeted_preflight_report.json"
+        attested_plan_sha256 = (
+            json.loads(preflight_path.read_text(encoding="utf-8")).get(
+                "protocol_plan_sha256"
+            )
+            if preflight_path.is_file()
+            else self.targeted_preflight_report.get("protocol_plan_sha256")
+        )
+        attestation = {
+            "schema_version": TARGETED_DATASET_SCHEMA_VERSION,
+            "teacher_commit": PINNED_TEACHER_COMMIT,
+            "canonical_state_layout_sha256": self.state_schema[
+                "canonical_state_layout_sha256"
+            ],
+            "protocol_plan_sha256": attested_plan_sha256,
+            "replay_source": cache.get("source", "fresh_exhaustive_replay"),
+            "replay_source_checks": dict(cache.get("checks", {})),
+            "legacy_replay_import": legacy_import,
+            "transition_store": self.transition_path.relative_to(
+                self.output_dir
+            ).as_posix(),
+            "transition_store_sha256": transition_sha256,
+            "structural": structural,
+            "exhaustive_replay": exhaustive,
+        }
+        write_json(
+            self.output_dir / "exhaustive_replay_attestation.json",
+            attestation,
+        )
+        report = {
+            **static,
+            "valid": not blockers,
+            "blockers": blockers,
+            "validation_phase": "complete",
+            "structural": structural,
+            "exhaustive_replay": exhaustive,
+            "replay_cache": {
+                key: value
+                for key, value in cache.items()
+                if key not in {"structural", "exhaustive_replay"}
+            },
+            "transition_store_sha256": transition_sha256,
+        }
+        validated_card = getattr(self, "_validated_dataset_card", None)
+        if validated_card is not None:
+            write_json(self.output_dir / "dataset_card.json", validated_card)
         write_json(self.output_dir / "validation_report.json", report)
-        self._write_artifact_index()
-        if blockers:
+        relative_transition = self.transition_path.relative_to(
+            self.output_dir
+        ).as_posix()
+        self._write_artifact_index(
+            known_hashes={relative_transition: transition_sha256}
+        )
+        if blockers and raise_on_failure:
             raise RuntimeError(f"diagnostic dataset v1.1 validation failed: {blockers}")
         return report
 
@@ -2964,6 +3961,8 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         pilot_report: Mapping[str, Any],
         positive_support_targets: Optional[Mapping[str, int]] = None,
         hard_negative_support_targets: Optional[Mapping[str, int]] = None,
+        minimum_positive_support_targets: Optional[Mapping[str, int]] = None,
+        minimum_hard_negative_support_targets: Optional[Mapping[str, int]] = None,
         require_snapshot_bank: bool = True,
     ) -> Dict[str, Any]:
         """Bind generation to a reviewed pilot and exact protocol hash."""
@@ -3052,6 +4051,23 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         )
         if not planned_support_validation["valid"]:
             blockers.append("planned independent support is insufficient")
+        minimum_positive = (
+            positive_support_targets
+            if minimum_positive_support_targets is None
+            else minimum_positive_support_targets
+        )
+        minimum_negative = (
+            hard_negative_support_targets
+            if minimum_hard_negative_support_targets is None
+            else minimum_hard_negative_support_targets
+        )
+        minimum_planned_support_validation = validate_minimum_support(
+            planned_support,
+            positive_targets=minimum_positive,
+            hard_negative_targets=minimum_negative,
+        )
+        if not minimum_planned_support_validation["valid"]:
+            blockers.append("planned support is below the diagnostic minimum")
         recovery_rows = [
             row for row in protocols if row.split == "recovery_test"
         ]
@@ -3076,6 +4092,9 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
             "heldout_branches": sorted(heldout_branches),
             "planned_support": planned_support,
             "planned_support_validation": planned_support_validation,
+            "minimum_planned_support_validation": (
+                minimum_planned_support_validation
+            ),
             "positive_support_targets": (
                 None
                 if positive_support_targets is None
@@ -3085,6 +4104,22 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                 None
                 if hard_negative_support_targets is None
                 else dict(hard_negative_support_targets)
+            ),
+            "planned_positive_support_targets": (
+                None
+                if positive_support_targets is None
+                else dict(positive_support_targets)
+            ),
+            "planned_hard_negative_support_targets": (
+                None
+                if hard_negative_support_targets is None
+                else dict(hard_negative_support_targets)
+            ),
+            "minimum_positive_support_targets": (
+                None if minimum_positive is None else dict(minimum_positive)
+            ),
+            "minimum_hard_negative_support_targets": (
+                None if minimum_negative is None else dict(minimum_negative)
             ),
             "snapshot_bank_required": bool(require_snapshot_bank),
             "pilot_report": dict(pilot_report),

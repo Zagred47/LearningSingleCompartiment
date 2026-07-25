@@ -1,4 +1,4 @@
-schema_version: 1.1.1
+schema_version: 1.1.2
 
 teacher:
   repository: https://github.com/SelfishGene/neuron_as_deep_net.git
@@ -30,10 +30,16 @@ biological_pilot:
   somatic_duration_ms: 20
   somatic_current_factors: [0.60, 0.75, 0.90, 1.00, 1.10, 1.25]
   bap_sweep:
-    assist_candidate_id: targeted_calcium-hot_zone-n10-b3-r1-unpaired-nearest-w800
+    assist_selection_policy: strongest_robust_event_free_subthreshold_assist
+    assist_subthreshold_margin_mv: 2.0
     current_factors: [0.00, 0.75, 1.00, 1.25, 1.50, 2.00, 3.00]
     pulse_counts: [2, 3]
     duration_ms: 80
+    threshold_mv: -20.0
+    maximum_delay_ms: 3.0
+    counterfactual_arms: [soma_only, assist_only, combined]
+    require_subthreshold_assist: true
+    reject_distal_crossing_before_trunk: true
   nmda_sweep:
     synapse_counts: [4, 6, 8, 10, 12]
     burst_counts: [1, 2]

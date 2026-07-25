@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 
-TARGETED_DATASET_SCHEMA_VERSION = "1.1.1"
+TARGETED_DATASET_SCHEMA_VERSION = "1.1.2"
 RELEASE_SCHEMA_VERSION = "1.2.0"
 TARGETED_EVENT_CLASSES: Tuple[str, ...] = (
     "axonal_spike",

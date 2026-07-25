@@ -18,7 +18,11 @@ from src.hayflow_teacher.event_extractor import (
     annotate_backpropagation,
     extract_events,
 )
-from src.hayflow_teacher import TargetedDiagnosticDatasetSession
+from src.hayflow_teacher import (
+    TargetedDiagnosticDatasetSession,
+    assess_causal_bap,
+    select_causal_bap_assist,
+)
 from src.hayflow_teacher.causal_release import CausalReleaseRecorder
 
 
@@ -276,6 +280,110 @@ class TargetedReleaseContractTest(unittest.TestCase):
         )
         self.assertEqual(rows[0]["origin"], "soma")
         self.assertEqual(rows[0]["maximum_distance_um"], 900)
+
+    def test_causal_bap_accepts_soma_then_trunk_without_distal_preemption(self):
+        time = [0.0, 0.5, 1.0, 1.5, 2.0]
+        events = [
+            {"kind": "axonal_spike", "onset_ms": 0.5},
+            {"kind": "somatic_spike", "onset_ms": 0.5},
+            {
+                "kind": "backpropagating_ap",
+                "onset_ms": 1.0,
+                "linked_delay_ms": 0.5,
+            },
+        ]
+        traces = {
+            "nexus": [-70, -60, -50, -10, -60],
+            "tuft": [-70, -70, -60, -50, -10],
+            "voltage_event_probe_mv": [-70, -65, -50, -15, -60],
+        }
+        report = assess_causal_bap(time, traces, events)
+        self.assertTrue(report["valid"])
+        self.assertEqual(report["accepted_bap_count"], 1)
+
+    def test_causal_bap_rejects_distal_crossing_before_trunk(self):
+        time = [0.0, 0.5, 1.0, 1.5]
+        events = [
+            {"kind": "axonal_spike", "onset_ms": 0.5},
+            {"kind": "somatic_spike", "onset_ms": 0.5},
+            {
+                "kind": "backpropagating_ap",
+                "onset_ms": 1.0,
+                "linked_delay_ms": 0.5,
+            },
+        ]
+        traces = {"nexus": [-70, -10, -5, -60]}
+        report = assess_causal_bap(time, traces, events)
+        self.assertFalse(report["valid"])
+        self.assertIn(
+            "distal_threshold_crossing_precedes_trunk",
+            report["candidates"][0]["rejection_reasons"],
+        )
+
+    def test_causal_bap_rejects_regenerative_assist_counterfactual(self):
+        time = [0.0, 0.5, 1.0, 1.5]
+        events = [
+            {"kind": "axonal_spike", "onset_ms": 0.5},
+            {"kind": "somatic_spike", "onset_ms": 0.5},
+            {
+                "kind": "backpropagating_ap",
+                "onset_ms": 1.0,
+                "linked_delay_ms": 0.5,
+            },
+        ]
+        report = assess_causal_bap(
+            time,
+            {},
+            events,
+            assist_only_events=[{"kind": "nmda_plateau"}],
+            assist_only_peak_voltage_mv=-10.0,
+            require_subthreshold_assist=True,
+        )
+        self.assertFalse(report["valid"])
+        self.assertFalse(report["assist_only_subthreshold"])
+        self.assertFalse(report["assist_only_peak_below_threshold"])
+        self.assertIn(
+            "assist_only_is_not_subthreshold",
+            report["candidates"][0]["rejection_reasons"],
+        )
+
+    def test_bap_assist_selection_uses_strongest_robust_subthreshold_arm(self):
+        trials = []
+        for candidate_id, peaks, kinds in (
+            ("weak", (-45.0, -44.0), ()),
+            ("strong", (-24.0, -23.0), ()),
+            ("too_close", (-21.0, -21.5), ()),
+            ("regenerative", (-30.0, -29.0), ("nmda_spike",)),
+        ):
+            for seed, peak in zip((1, 2), peaks):
+                trials.append(
+                    {
+                        "candidate_id": candidate_id,
+                        "family": "targeted_calcium",
+                        "pair_with_somatic_spike": False,
+                        "seed": seed,
+                        "event_kinds": list(kinds),
+                        "event_probe_peak_voltage_mv": peak,
+                    }
+                )
+        report = select_causal_bap_assist(
+            trials,
+            (1, 2),
+            threshold_mv=-20.0,
+            subthreshold_margin_mv=2.0,
+        )
+        self.assertTrue(report["valid"])
+        self.assertEqual(report["selected_candidate_id"], "strong")
+        rejected = {
+            row["candidate_id"]: row["rejection_reasons"]
+            for row in report["candidates"]
+        }
+        self.assertIn(
+            "assist_peak_exceeds_subthreshold_ceiling", rejected["too_close"]
+        )
+        self.assertIn(
+            "event_detected_in_assist_only_arm", rejected["regenerative"]
+        )
 
 
 class TargetedProtocolPlannerTest(unittest.TestCase):

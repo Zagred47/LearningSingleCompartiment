@@ -1,4 +1,4 @@
-"""Targeted HayFlow diagnostic transition dataset, schema 1.1.1."""
+"""Targeted HayFlow diagnostic transition dataset, schema 1.1.2."""
 
 from __future__ import annotations
 
@@ -42,6 +42,277 @@ from .event_extractor import annotate_backpropagation, extract_events
 from .dendritic_calibration import DendriticCandidate, DendriticProtocolCalibrator
 
 
+BAP_CONFOUNDING_EVENT_KINDS = frozenset(
+    {
+        "axonal_spike",
+        "somatic_spike",
+        "backpropagating_ap",
+        "calcium_spike",
+        "nmda_spike",
+        "nmda_plateau",
+    }
+)
+BAP_REGENERATIVE_EVENT_KINDS = frozenset(
+    {"calcium_spike", "nmda_spike", "nmda_plateau"}
+)
+
+
+def _first_threshold_time(
+    time_ms: Sequence[float],
+    values: Sequence[float],
+    *,
+    start_ms: float,
+    stop_ms: float,
+    threshold_mv: float,
+) -> Optional[float]:
+    """Return the first threshold sample in a closed diagnostic window."""
+
+    if len(time_ms) != len(values):
+        raise ValueError("bAP diagnostic trace does not match the time grid")
+    for time_value, signal_value in zip(time_ms, values):
+        time_value = float(time_value)
+        if time_value < float(start_ms) - 1.0e-12:
+            continue
+        if time_value > float(stop_ms) + 1.0e-12:
+            break
+        if float(signal_value) >= float(threshold_mv):
+            return time_value
+    return None
+
+
+def assess_causal_bap(
+    time_ms: Sequence[float],
+    traces: Mapping[str, Sequence[float]],
+    events: Sequence[Mapping[str, Any]],
+    *,
+    assist_only_events: Sequence[Mapping[str, Any]] = (),
+    assist_only_peak_voltage_mv: Optional[float] = None,
+    require_subthreshold_assist: bool = False,
+    threshold_mv: float = -20.0,
+    maximum_delay_ms: float = 3.0,
+) -> Dict[str, Any]:
+    """Validate a bAP label against temporal and counterfactual evidence.
+
+    A combined somatic+dendritic protocol is eligible only when its dendritic
+    arm is event-free in isolation.  In every arm the accepted event must be
+    linked to a somatic spike, reach the trunk inside the configured delay and
+    must not be preceded by a regenerative distal event or distal threshold
+    crossing.  This prevents a locally initiated Ca/NMDA event from being
+    relabelled as a backpropagating action potential.
+    """
+
+    if len(time_ms) == 0:
+        raise ValueError("bAP assessment requires a non-empty time grid")
+    if float(maximum_delay_ms) <= 0.0:
+        raise ValueError("maximum bAP delay must be positive")
+
+    assist_kinds = sorted({str(row["kind"]) for row in assist_only_events})
+    assist_confounds = sorted(BAP_CONFOUNDING_EVENT_KINDS & set(assist_kinds))
+    assist_peak_subthreshold = (
+        assist_only_peak_voltage_mv is None
+        or float(assist_only_peak_voltage_mv) < float(threshold_mv)
+    )
+    assist_subthreshold = not assist_confounds and assist_peak_subthreshold
+    raw_baps = [
+        (index, row)
+        for index, row in enumerate(events)
+        if str(row.get("kind")) == "backpropagating_ap"
+    ]
+    axonal_events = [
+        row for row in events if str(row.get("kind")) == "axonal_spike"
+    ]
+    accepted_indices: List[int] = []
+    candidate_reports: List[Dict[str, Any]] = []
+
+    for event_index, event in raw_baps:
+        reasons: List[str] = []
+        trunk_onset = float(event["onset_ms"])
+        linked_delay = event.get("linked_delay_ms")
+        if linked_delay is None:
+            reasons.append("missing_somatic_link")
+            soma_onset = trunk_onset
+        else:
+            linked_delay = float(linked_delay)
+            soma_onset = trunk_onset - linked_delay
+            if linked_delay < -1.0e-12:
+                reasons.append("trunk_precedes_soma")
+            if linked_delay > float(maximum_delay_ms) + 1.0e-12:
+                reasons.append("trunk_delay_exceeds_limit")
+
+        if not any(
+            soma_onset - float(maximum_delay_ms) - 1.0e-12
+            <= float(row["onset_ms"])
+            <= trunk_onset + 1.0e-12
+            for row in axonal_events
+        ):
+            reasons.append("missing_nearby_axonal_spike")
+
+        early_regenerative = sorted(
+            {
+                str(row["kind"])
+                for row in events
+                if str(row.get("kind")) in BAP_REGENERATIVE_EVENT_KINDS
+                and float(row["onset_ms"]) < trunk_onset - 1.0e-12
+            }
+        )
+        if early_regenerative:
+            reasons.append("regenerative_dendritic_event_precedes_trunk")
+
+        early_distal_crossings: Dict[str, float] = {}
+        for label in ("nexus", "tuft", "voltage_event_probe_mv"):
+            if label not in traces:
+                continue
+            crossing = _first_threshold_time(
+                time_ms,
+                traces[label],
+                start_ms=soma_onset,
+                stop_ms=trunk_onset,
+                threshold_mv=threshold_mv,
+            )
+            if crossing is not None and crossing < trunk_onset - 1.0e-12:
+                early_distal_crossings[label] = float(crossing)
+        if early_distal_crossings:
+            reasons.append("distal_threshold_crossing_precedes_trunk")
+
+        if require_subthreshold_assist and not assist_subthreshold:
+            reasons.append("assist_only_is_not_subthreshold")
+
+        accepted = not reasons
+        if accepted:
+            accepted_indices.append(int(event_index))
+        candidate_reports.append(
+            {
+                "event_index": int(event_index),
+                "accepted": bool(accepted),
+                "soma_onset_ms": float(soma_onset),
+                "trunk_onset_ms": float(trunk_onset),
+                "trunk_delay_ms": float(trunk_onset - soma_onset),
+                "early_regenerative_event_kinds": early_regenerative,
+                "early_distal_crossings_ms": early_distal_crossings,
+                "rejection_reasons": reasons,
+            }
+        )
+
+    return {
+        "valid": bool(accepted_indices),
+        "contract": "counterfactual_soma_origin_and_ordered_trunk_arrival",
+        "threshold_mv": float(threshold_mv),
+        "maximum_delay_ms": float(maximum_delay_ms),
+        "require_subthreshold_assist": bool(require_subthreshold_assist),
+        "assist_only_subthreshold": bool(assist_subthreshold),
+        "assist_only_peak_voltage_mv": (
+            None
+            if assist_only_peak_voltage_mv is None
+            else float(assist_only_peak_voltage_mv)
+        ),
+        "assist_only_peak_below_threshold": bool(assist_peak_subthreshold),
+        "assist_only_event_kinds": assist_kinds,
+        "assist_only_confounding_event_kinds": assist_confounds,
+        "raw_bap_count": len(raw_baps),
+        "accepted_bap_count": len(accepted_indices),
+        "accepted_event_indices": accepted_indices,
+        "candidates": candidate_reports,
+    }
+
+
+def _causal_event_kinds(
+    events: Sequence[Mapping[str, Any]], assessment: Mapping[str, Any]
+) -> List[str]:
+    """Expose bAP to adaptive selection only after the causal gate passes."""
+
+    kinds = {str(row["kind"]) for row in events}
+    if not bool(assessment.get("valid")):
+        kinds.discard("backpropagating_ap")
+    return sorted(kinds)
+
+
+def select_causal_bap_assist(
+    trials: Sequence[Mapping[str, Any]],
+    seeds: Sequence[int],
+    *,
+    threshold_mv: float = -20.0,
+    subthreshold_margin_mv: float = 2.0,
+) -> Dict[str, Any]:
+    """Select the strongest dendritic arm that is subthreshold on every seed."""
+
+    required_seeds = set(map(int, seeds))
+    if not required_seeds:
+        raise ValueError("BAP assist selection requires at least one seed")
+    if float(subthreshold_margin_mv) < 0.0:
+        raise ValueError("BAP assist subthreshold margin cannot be negative")
+    ceiling = float(threshold_mv) - float(subthreshold_margin_mv)
+    grouped: Dict[str, List[Mapping[str, Any]]] = {}
+    for row in trials:
+        if row.get("family") != "targeted_calcium":
+            continue
+        if bool(row.get("pair_with_somatic_spike", False)):
+            continue
+        grouped.setdefault(str(row["candidate_id"]), []).append(row)
+
+    candidates = []
+    for candidate_id, rows in sorted(grouped.items()):
+        observed_seeds = {int(row["seed"]) for row in rows}
+        confounds = sorted(
+            BAP_CONFOUNDING_EVENT_KINDS
+            & {
+                str(kind)
+                for row in rows
+                for kind in row.get("event_kinds", ())
+            }
+        )
+        peaks = [float(row["event_probe_peak_voltage_mv"]) for row in rows]
+        reasons = []
+        if observed_seeds != required_seeds:
+            reasons.append("missing_required_seed")
+        if confounds:
+            reasons.append("event_detected_in_assist_only_arm")
+        if peaks and max(peaks) > ceiling + 1.0e-12:
+            reasons.append("assist_peak_exceeds_subthreshold_ceiling")
+        if not peaks:
+            reasons.append("missing_assist_peak_voltage")
+        candidates.append(
+            {
+                "candidate_id": candidate_id,
+                "eligible": not reasons,
+                "event_probe_peak_voltage_mv_by_seed": {
+                    str(row["seed"]): float(row["event_probe_peak_voltage_mv"])
+                    for row in rows
+                },
+                "worst_seed_peak_voltage_mv": min(peaks) if peaks else None,
+                "highest_peak_voltage_mv": max(peaks) if peaks else None,
+                "confounding_event_kinds": confounds,
+                "rejection_reasons": reasons,
+            }
+        )
+    eligible = [row for row in candidates if row["eligible"]]
+    selected = (
+        max(
+            eligible,
+            key=lambda row: (
+                float(row["worst_seed_peak_voltage_mv"]),
+                float(row["highest_peak_voltage_mv"]),
+                str(row["candidate_id"]),
+            ),
+        )
+        if eligible
+        else None
+    )
+    return {
+        "valid": selected is not None,
+        "policy": "strongest_robust_event_free_subthreshold_assist",
+        "threshold_mv": float(threshold_mv),
+        "subthreshold_margin_mv": float(subthreshold_margin_mv),
+        "subthreshold_ceiling_mv": ceiling,
+        "selected_candidate_id": (
+            None if selected is None else str(selected["candidate_id"])
+        ),
+        "eligible_candidate_ids": [
+            str(row["candidate_id"]) for row in eligible
+        ],
+        "candidates": candidates,
+    }
+
+
 class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
     """Version 1.1 session with causal release logging and pilot gates."""
 
@@ -62,6 +333,7 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         self.targeted_preflight_report: Dict[str, Any] = {}
         self.targeted_recipe_catalog: List[TargetedRecipe] = []
         self.snapshot_bank: Dict[str, Dict[str, Any]] = {}
+        self._preserve_raw_bap_events = False
 
     @staticmethod
     def _protocol_plan_sha256(
@@ -216,7 +488,9 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                     "nmda_plateau is the sustained subset with duration >= 10 ms"
                 ),
                 "bap_policy": (
-                    "somatic origin plus ordered soma-to-trunk regional propagation"
+                    "counterfactual soma-only/assist-only/combined calibration; "
+                    "axonal and somatic origin; trunk arrival within 3 ms; reject "
+                    "regenerative events or distal threshold crossings before trunk"
                 ),
                 "right_censoring_policy": (
                     "retain censored labels; exclude them from duration/offset targets"
@@ -272,12 +546,28 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                 self.audit.segment_df["segment_id"] == int(segment_id)
             ]
             distances[label] = float(row.iloc[0]["distance_from_soma_um"])
-        return annotate_backpropagation(
+        annotated = annotate_backpropagation(
             time_ms,
             traces,
             events,
             regional_distances_um=distances,
         )
+        if self._preserve_raw_bap_events:
+            return annotated
+        assessment = assess_causal_bap(time_ms, traces, annotated)
+        accepted = set(map(int, assessment["accepted_event_indices"]))
+        filtered = []
+        for event_index, event in enumerate(annotated):
+            if str(event.get("kind")) != "backpropagating_ap":
+                filtered.append(event)
+                continue
+            if event_index not in accepted:
+                continue
+            causal = dict(event)
+            causal["causal_validation"] = assessment["contract"]
+            causal["causal_validation_passed"] = True
+            filtered.append(causal)
+        return filtered
 
     @staticmethod
     def _enforce_nmda_event_hierarchy(
@@ -318,15 +608,20 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         trajectory: ProtocolTrajectory,
         time_ms: Sequence[float],
         traces: Mapping[str, Sequence[float]],
+        *,
+        preserve_raw_bap: bool = False,
     ) -> List[Dict[str, Any]]:
         """Extract with the trajectory-local probe contract still in scope."""
 
         previous = self._active_trajectory
+        previous_raw_policy = self._preserve_raw_bap_events
         self._active_trajectory = trajectory
+        self._preserve_raw_bap_events = bool(preserve_raw_bap)
         try:
             return self._extract_events(time_ms, traces)
         finally:
             self._active_trajectory = previous
+            self._preserve_raw_bap_events = previous_raw_policy
 
     def _configure_rngs(
         self, seed: int, sequences: Sequence[float]
@@ -858,6 +1153,7 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         nmda_cfg = config["nmda_sweep"]
         calcium_cfg = config["calcium_sweep"]
         bap_cfg = config.get("bap_sweep", {})
+        assist_selection: Dict[str, Any] = {}
         base_trial_total = len(seeds) * (
             len(nmda_cfg["synapse_counts"])
             * len(nmda_cfg["burst_counts"])
@@ -866,7 +1162,8 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
             * len(calcium_cfg["paired"])
             * len(calcium_cfg["event_windows_ms"])
             + len(config["somatic_current_factors"])
-            + len(bap_cfg.get("current_factors", ()))
+            + 2
+            * len(bap_cfg.get("current_factors", ()))
             * len(bap_cfg.get("pulse_counts", ()))
         )
         pilot_progress = _ConsoleProgress("pilot biologico", base_trial_total)
@@ -996,7 +1293,44 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                 )
 
         if bap_cfg:
-            assist_id = str(bap_cfg["assist_candidate_id"])
+            if bap_cfg.get("assist_selection_policy") != (
+                "strongest_robust_event_free_subthreshold_assist"
+            ):
+                raise ValueError("unsupported BAP assist selection policy")
+            if set(bap_cfg.get("counterfactual_arms", ())) != {
+                "soma_only",
+                "assist_only",
+                "combined",
+            }:
+                raise ValueError(
+                    "BAP calibration requires soma-only, assist-only and combined arms"
+                )
+            if not bool(bap_cfg.get("require_subthreshold_assist", False)):
+                raise ValueError("BAP assist must be counterfactually subthreshold")
+            if not bool(
+                bap_cfg.get("reject_distal_crossing_before_trunk", False)
+            ):
+                raise ValueError(
+                    "BAP calibration must reject distal crossings before trunk"
+                )
+            bap_threshold_mv = float(bap_cfg.get("threshold_mv", -20.0))
+            bap_maximum_delay_ms = float(
+                bap_cfg.get("maximum_delay_ms", 3.0)
+            )
+            assist_selection = select_causal_bap_assist(
+                trials,
+                seeds,
+                threshold_mv=bap_threshold_mv,
+                subthreshold_margin_mv=float(
+                    bap_cfg.get("assist_subthreshold_margin_mv", 2.0)
+                ),
+            )
+            if not assist_selection["valid"]:
+                raise RuntimeError(
+                    "no robust subthreshold dendritic BAP assist candidate; "
+                    f"selection={assist_selection}"
+                )
+            assist_id = str(assist_selection["selected_candidate_id"])
             assist_by_seed = {
                 int(row["seed"]): row
                 for row in trials
@@ -1014,23 +1348,21 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                 if pulse_count <= 0:
                     raise ValueError("BAP pulse count must be positive")
                 for factor in map(float, bap_cfg["current_factors"]):
-                    candidate_id = (
-                        f"targeted_bap-assisted-p{pulse_count}-factor{factor:.4f}"
-                    )
                     for seed in seeds:
                         source = assist_by_seed[seed]
-                        schedule = {
+                        assist_schedule = {
                             step: list(actions)
                             for step, actions in action_schedule_from_json(
                                 source["input_schedule"]
                             ).items()
                         }
-                        first_synaptic_step = min(schedule)
+                        first_synaptic_step = min(assist_schedule)
+                        current_schedule: Dict[int, List[InputAction]] = {}
                         if factor > 0.0:
                             first_current_step = max(0, first_synaptic_step - 1)
                             for pulse_index in range(pulse_count):
                                 step = first_current_step + pulse_index
-                                schedule.setdefault(step, []).append(
+                                current_schedule.setdefault(step, []).append(
                                     InputAction(
                                         "somatic_current",
                                         0.05,
@@ -1038,6 +1370,110 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                                         amplitude_na=bap_base_current * factor,
                                     )
                                 )
+
+                        soma_only_schedule = {
+                            int(step): tuple(
+                                sorted(
+                                    actions,
+                                    key=lambda action: (
+                                        float(action.offset_ms),
+                                        action.kind,
+                                        -1
+                                        if action.synapse_id is None
+                                        else int(action.synapse_id),
+                                    ),
+                                )
+                            )
+                            for step, actions in current_schedule.items()
+                        }
+                        probe_segment_id = int(source["event_probe_segment_id"])
+                        soma_only_id = (
+                            f"targeted_bap-soma-only-p{pulse_count}-"
+                            f"factor{factor:.4f}"
+                        )
+                        soma_only_trajectory = ProtocolTrajectory(
+                            trajectory_id=f"pilot-{soma_only_id}-seed{seed}",
+                            category="dendritic_events",
+                            protocol="targeted_bap",
+                            protocol_id=soma_only_id,
+                            protocol_variant="somatic_only_counterfactual",
+                            seed=int(seed),
+                            duration_ms=bap_duration,
+                            split="event_boundary_test",
+                            actions_by_step=soma_only_schedule,
+                            stimulus_onset_step=min(soma_only_schedule, default=0),
+                            metadata={
+                                "event_probe_segment_id": probe_segment_id,
+                                "event_probe_kinds": ["calcium_spike"],
+                                "event_probe_region": str(
+                                    source.get("event_probe_region", "hot_zone")
+                                ),
+                            },
+                        )
+                        soma_times, soma_traces = (
+                            self._run_trajectory_prefix_in_memory(
+                                soma_only_trajectory, bap_duration
+                            )
+                        )
+                        soma_events = self._extract_trajectory_events(
+                            soma_only_trajectory,
+                            soma_times,
+                            soma_traces,
+                            preserve_raw_bap=True,
+                        )
+                        soma_assessment = assess_causal_bap(
+                            soma_times,
+                            soma_traces,
+                            soma_events,
+                            threshold_mv=bap_threshold_mv,
+                            maximum_delay_ms=bap_maximum_delay_ms,
+                        )
+                        soma_raw_kinds = sorted(
+                            {str(row["kind"]) for row in soma_events}
+                        )
+                        trials.append(
+                            {
+                                "candidate_id": soma_only_id,
+                                "family": "targeted_bap_soma_only",
+                                "seed": int(seed),
+                                "event_kinds": _causal_event_kinds(
+                                    soma_events, soma_assessment
+                                ),
+                                "raw_event_kinds": soma_raw_kinds,
+                                "events": soma_events,
+                                "bap_causal_assessment": soma_assessment,
+                                "stimulus_scalar": float(factor * pulse_count),
+                                "duration_ms": bap_duration,
+                                "branch_id": "soma-to-trunk",
+                                "event_probe_segment_id": probe_segment_id,
+                                "event_probe_region": str(
+                                    source.get("event_probe_region", "hot_zone")
+                                ),
+                                "event_probe_kinds": ["calcium_spike"],
+                                "selected_synapse_ids": [],
+                                "input_schedule": {
+                                    str(step): [
+                                        action.to_dict() for action in actions
+                                    ]
+                                    for step, actions in soma_only_schedule.items()
+                                },
+                            }
+                        )
+                        pilot_progress.update(
+                            len(trials),
+                            detail=(
+                                f"{soma_only_id}; seed={seed}; "
+                                "bAP causale="
+                                f"{'si' if soma_assessment['valid'] else 'no'}"
+                            ),
+                        )
+
+                        combined_schedule = {
+                            step: list(actions)
+                            for step, actions in assist_schedule.items()
+                        }
+                        for step, actions in current_schedule.items():
+                            combined_schedule.setdefault(step, []).extend(actions)
                         ordered_schedule = {
                             int(step): tuple(
                                 sorted(
@@ -1051,16 +1487,19 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                                     ),
                                 )
                             )
-                            for step, actions in schedule.items()
+                            for step, actions in combined_schedule.items()
                         }
-                        probe_segment_id = int(source["event_probe_segment_id"])
+                        candidate_id = (
+                            f"targeted_bap-assisted-p{pulse_count}-"
+                            f"factor{factor:.4f}"
+                        )
                         trajectory = ProtocolTrajectory(
                             trajectory_id=f"pilot-{candidate_id}-seed{seed}",
                             category="dendritic_events",
                             protocol="targeted_bap",
                             protocol_id=candidate_id,
                             protocol_variant=(
-                                "somatic_spikes_with_subthreshold_hot_zone_assist"
+                                "somatic_spikes_with_counterfactual_hot_zone_assist"
                             ),
                             seed=int(seed),
                             duration_ms=bap_duration,
@@ -1079,17 +1518,43 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                             trajectory, bap_duration
                         )
                         events = self._extract_trajectory_events(
-                            trajectory, times, traces
+                            trajectory,
+                            times,
+                            traces,
+                            preserve_raw_bap=True,
+                        )
+                        assessment = assess_causal_bap(
+                            times,
+                            traces,
+                            events,
+                            assist_only_events=source["events"],
+                            assist_only_peak_voltage_mv=float(
+                                source["event_probe_peak_voltage_mv"]
+                            ),
+                            require_subthreshold_assist=True,
+                            threshold_mv=bap_threshold_mv,
+                            maximum_delay_ms=bap_maximum_delay_ms,
+                        )
+                        raw_kinds = sorted(
+                            {str(row["kind"]) for row in events}
                         )
                         trials.append(
                             {
                                 "candidate_id": candidate_id,
                                 "family": "targeted_bap",
                                 "seed": int(seed),
-                                "event_kinds": sorted(
-                                    {str(row["kind"]) for row in events}
+                                "event_kinds": _causal_event_kinds(
+                                    events, assessment
                                 ),
+                                "raw_event_kinds": raw_kinds,
                                 "events": events,
+                                "bap_causal_assessment": assessment,
+                                "counterfactual_soma_only_candidate_id": (
+                                    soma_only_id
+                                ),
+                                "counterfactual_assist_only_candidate_id": (
+                                    assist_id
+                                ),
                                 "stimulus_scalar": float(factor * pulse_count),
                                 "duration_ms": bap_duration,
                                 "branch_id": (
@@ -1115,7 +1580,10 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                             len(trials),
                             detail=(
                                 f"{candidate_id}; seed={seed}; "
-                                f"eventi={','.join(trials[-1]['event_kinds']) or 'nessuno'}"
+                                "assist subthreshold="
+                                f"{'si' if assessment['assist_only_subthreshold'] else 'no'}; "
+                                "bAP causale="
+                                f"{'si' if assessment['valid'] else 'no'}"
                             ),
                         )
 
@@ -1285,6 +1753,17 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                         ),
                         "selected_synapse_ids": list(
                             reference.get("selected_synapse_ids", ())
+                        ),
+                        "bap_causal_assessments_by_seed": {
+                            str(row["seed"]): row["bap_causal_assessment"]
+                            for row in by_candidate[candidate_id]
+                            if row.get("bap_causal_assessment") is not None
+                        },
+                        "counterfactual_soma_only_candidate_id": reference.get(
+                            "counterfactual_soma_only_candidate_id"
+                        ),
+                        "counterfactual_assist_only_candidate_id": reference.get(
+                            "counterfactual_assist_only_candidate_id"
                         ),
                     },
                 )
@@ -1599,6 +2078,57 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
             )
         recipes.extend(recovery_recipes)
         self.targeted_recipe_catalog = recipes
+        bap_counterfactual_trials = [
+            row
+            for row in trials
+            if row.get("family") in {"targeted_bap", "targeted_bap_soma_only"}
+        ]
+        bap_candidate_groups: Dict[str, List[Mapping[str, Any]]] = {}
+        for row in bap_counterfactual_trials:
+            bap_candidate_groups.setdefault(
+                str(row["candidate_id"]), []
+            ).append(row)
+        bap_causal_summary = {
+            "contract": "counterfactual_soma_origin_and_ordered_trunk_arrival",
+            "threshold_mv": float(bap_cfg.get("threshold_mv", -20.0))
+            if bap_cfg
+            else -20.0,
+            "maximum_delay_ms": float(
+                bap_cfg.get("maximum_delay_ms", 3.0)
+            )
+            if bap_cfg
+            else 3.0,
+            "soma_only_arm": True,
+            "assist_only_arm": True,
+            "combined_arm": True,
+            "assist_selection": assist_selection,
+            "raw_bap_trial_count": sum(
+                "backpropagating_ap" in row.get("raw_event_kinds", ())
+                for row in bap_counterfactual_trials
+            ),
+            "causal_bap_trial_count": sum(
+                bool(row.get("bap_causal_assessment", {}).get("valid"))
+                for row in bap_counterfactual_trials
+            ),
+            "robust_positive_candidate_ids": sorted(
+                candidate_id
+                for candidate_id, rows in bap_candidate_groups.items()
+                if len({int(row["seed"]) for row in rows}) == len(seeds)
+                and all(
+                    bool(row.get("bap_causal_assessment", {}).get("valid"))
+                    for row in rows
+                )
+            ),
+            "combined_assist_subthreshold_seed_count": sum(
+                bool(
+                    row.get("bap_causal_assessment", {}).get(
+                        "assist_only_subthreshold"
+                    )
+                )
+                for row in bap_counterfactual_trials
+                if row.get("family") == "targeted_bap"
+            ),
+        }
         report = {
             "schema_version": TARGETED_DATASET_SCHEMA_VERSION,
             "valid": brackets["valid"]
@@ -1614,6 +2144,7 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                 "plateau_is_nmda_spike_subset": True,
             },
             "bap_sweep": dict(bap_cfg),
+            "bap_causal_validation": bap_causal_summary,
             "adaptive_brackets": brackets,
             "recipe_count": len(recipes),
             "heldout_branch_recipe_count": sum(

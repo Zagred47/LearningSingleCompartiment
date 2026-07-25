@@ -51,11 +51,17 @@ from .diagnostic_dataset_v1 import (
     validate_calibration_artifacts,
 )
 from .causal_release import CausalReleaseRecorder
-from .diagnostic_dataset_v1_1 import TargetedDiagnosticDatasetSession
+from .diagnostic_dataset_v1_1 import (
+    TargetedDiagnosticDatasetSession,
+    assess_causal_bap,
+    select_causal_bap_assist,
+)
 
 __all__ = [
     "CausalReleaseRecorder",
     "TargetedDiagnosticDatasetSession",
+    "assess_causal_bap",
+    "select_causal_bap_assist",
     "BoundaryState",
     "default_event_definitions",
     "detect_spikes",

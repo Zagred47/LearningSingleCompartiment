@@ -3780,9 +3780,15 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         self,
         *,
         reuse_verified_replay: bool = True,
+        allow_fresh_replay: bool = True,
         raise_on_failure: bool = True,
     ) -> Dict[str, Any]:
-        """Validate cheap gates first, then replay or reuse its hash-bound proof."""
+        """Validate cheap gates first, then replay or reuse its hash-bound proof.
+
+        Recovery callers can set ``allow_fresh_replay=False`` to guarantee that
+        failure to verify existing evidence stops immediately instead of
+        silently launching another exhaustive NEURON replay.
+        """
 
         static = self.validate_static_dataset_v1_1()
         print(
@@ -3839,6 +3845,28 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
             exhaustive = dict(cache["exhaustive_replay"])
             transition_sha256 = str(cache["transition_store_sha256"])
             legacy_import = self._preserve_legacy_replay_evidence(cache)
+        elif not allow_fresh_replay:
+            report = {
+                **static,
+                "valid": False,
+                "blockers": [
+                    *static["blockers"],
+                    "verified replay proof is unavailable and fresh replay is disabled",
+                ],
+                "validation_phase": "replay_recovery_rejected",
+                "structural": {"valid": False, "skipped": True},
+                "exhaustive_replay": {"valid": False, "skipped": True},
+                "replay_cache": cache,
+            }
+            write_json(
+                self.output_dir / "validation_attempt_report.json", report
+            )
+            if raise_on_failure:
+                raise RuntimeError(
+                    "diagnostic dataset v1.1 replay recovery failed: "
+                    f"{report['blockers']}"
+                )
+            return report
         else:
             print(
                 "[HayFlow][validazione] replay certificato non riutilizzabile "

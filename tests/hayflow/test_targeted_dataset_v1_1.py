@@ -812,6 +812,36 @@ class TargetedSupportAcceptanceTest(unittest.TestCase):
                 (session.output_dir / "validation_attempt_report.json").is_file()
             )
 
+    def test_recovery_mode_never_falls_back_to_a_fresh_replay(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            session = object.__new__(TargetedDiagnosticDatasetSession)
+            session.output_dir = Path(temporary)
+            session.validate_static_dataset_v1_1 = lambda: {
+                "schema_version": "1.1.2",
+                "valid": True,
+                "blockers": [],
+                "warnings": [],
+                "planned_target_attainment": {"valid": False},
+            }
+            session._verified_replay_cache = lambda: {
+                "valid": False,
+                "reason": "proof missing",
+            }
+            replay_started = []
+            session._exhaustive_sequential_replay = lambda: replay_started.append(
+                True
+            )
+            report = session.validate_dataset_v1_1(
+                allow_fresh_replay=False,
+                raise_on_failure=False,
+            )
+            self.assertFalse(report["valid"])
+            self.assertEqual(
+                report["validation_phase"], "replay_recovery_rejected"
+            )
+            self.assertTrue(report["exhaustive_replay"]["skipped"])
+            self.assertEqual(replay_started, [])
+
     def test_static_gate_inputs_must_match_an_intact_artifact_index(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

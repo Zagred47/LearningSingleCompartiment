@@ -35,6 +35,7 @@ from .targeted_protocols import (
     action_schedule_from_json,
     append_specialized_test_episodes,
     build_balanced_episode_plan,
+    build_budgeted_episode_plan,
     select_adaptive_recipe_brackets,
     split_assignment_key,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "action_schedule_from_json",
     "append_specialized_test_episodes",
     "build_balanced_episode_plan",
+    "build_budgeted_episode_plan",
     "select_adaptive_recipe_brackets",
     "split_assignment_key",
     "BOUNDARY_INTERVAL_MS",

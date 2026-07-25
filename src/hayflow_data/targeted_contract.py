@@ -215,14 +215,29 @@ def summarize_independent_support(
 
 def validate_minimum_support(
     support: Mapping[str, Mapping[str, Mapping[str, int]]],
+    *,
+    positive_targets: Mapping[str, int] | None = None,
+    hard_negative_targets: Mapping[str, int] | None = None,
 ) -> Dict[str, Any]:
     """Apply the v1.1 independent-episode acceptance targets."""
 
-    targets = {
-        "train": (64, 128),
-        "validation": (16, 32),
-        "test": (16, 32),
-    }
+    if positive_targets is None and hard_negative_targets is None:
+        targets = {
+            "train": (64, 128),
+            "validation": (16, 32),
+            "test": (16, 32),
+        }
+    else:
+        positive = dict(positive_targets or {})
+        negative = dict(hard_negative_targets or {})
+        if not positive or set(positive) != set(negative):
+            raise ValueError(
+                "positive and hard-negative support targets must share splits"
+            )
+        targets = {
+            str(split): (int(positive[split]), int(negative[split]))
+            for split in positive
+        }
     failures = []
     for event_class in TARGETED_EVENT_CLASSES:
         by_split = support.get(event_class, {})

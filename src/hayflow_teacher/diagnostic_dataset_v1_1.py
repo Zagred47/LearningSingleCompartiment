@@ -2402,7 +2402,17 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
                 }
             )
         support = summarize_independent_support(episodes)
-        support_validation = validate_minimum_support(support)
+        effective_positive_targets = self.targeted_preflight_report.get(
+            "positive_support_targets"
+        )
+        effective_negative_targets = self.targeted_preflight_report.get(
+            "hard_negative_support_targets"
+        )
+        support_validation = validate_minimum_support(
+            support,
+            positive_targets=effective_positive_targets,
+            hard_negative_targets=effective_negative_targets,
+        )
         release_success = Counter(
             (
                 str(row["synapse_type"]),
@@ -2952,6 +2962,9 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         protocols: Sequence[ProtocolTrajectory],
         *,
         pilot_report: Mapping[str, Any],
+        positive_support_targets: Optional[Mapping[str, int]] = None,
+        hard_negative_support_targets: Optional[Mapping[str, int]] = None,
+        require_snapshot_bank: bool = True,
     ) -> Dict[str, Any]:
         """Bind generation to a reviewed pilot and exact protocol hash."""
 
@@ -2965,7 +2978,7 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
             str(row.metadata.get("snapshot_id", row.snapshot_source))
             for row in protocols
         }
-        if snapshot_ids - set(self.snapshot_bank):
+        if require_snapshot_bank and snapshot_ids - set(self.snapshot_bank):
             blockers.append("split-specific snapshot bank is incomplete")
         required_splits = {
             "train",
@@ -3032,7 +3045,11 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
         if not heldout_branches or train_branches & heldout_branches:
             blockers.append("held-out branch is present in train")
         planned_support = summarize_independent_support(planned_episode_rows)
-        planned_support_validation = validate_minimum_support(planned_support)
+        planned_support_validation = validate_minimum_support(
+            planned_support,
+            positive_targets=positive_support_targets,
+            hard_negative_targets=hard_negative_support_targets,
+        )
         if not planned_support_validation["valid"]:
             blockers.append("planned independent support is insufficient")
         recovery_rows = [
@@ -3059,8 +3076,23 @@ class TargetedDiagnosticDatasetSession(DiagnosticDatasetV1Session):
             "heldout_branches": sorted(heldout_branches),
             "planned_support": planned_support,
             "planned_support_validation": planned_support_validation,
+            "positive_support_targets": (
+                None
+                if positive_support_targets is None
+                else dict(positive_support_targets)
+            ),
+            "hard_negative_support_targets": (
+                None
+                if hard_negative_support_targets is None
+                else dict(hard_negative_support_targets)
+            ),
+            "snapshot_bank_required": bool(require_snapshot_bank),
             "pilot_report": dict(pilot_report),
         }
-        self.targeted_preflight_report = report
-        write_json(self.output_dir / "targeted_preflight_report.json", report)
+        if require_snapshot_bank:
+            self.targeted_preflight_report = report
+            destination = self.output_dir / "targeted_preflight_report.json"
+        else:
+            destination = self.output_dir / "targeted_plan_review.json"
+        write_json(destination, report)
         return report

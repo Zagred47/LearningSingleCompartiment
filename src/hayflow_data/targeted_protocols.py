@@ -344,7 +344,8 @@ def build_balanced_episode_plan(
             }
             category = (
                 "somatic_events"
-                if recipe.family in {"somatic", "bap"}
+                if recipe.family
+                in {"somatic", "bap", "targeted_somatic_bap", "targeted_bap_soma_only"}
                 else "dendritic_events"
             )
             trajectory = ProtocolTrajectory(
@@ -514,7 +515,13 @@ def append_specialized_test_episodes(
                 "branching"
                 if split in {"branching_near_test", "branching_far_test"}
                 else "somatic_events"
-                if recipe.family in {"somatic", "bap", "targeted_somatic_bap"}
+                if recipe.family
+                in {
+                    "somatic",
+                    "bap",
+                    "targeted_somatic_bap",
+                    "targeted_bap_soma_only",
+                }
                 else "dendritic_events"
             ),
             protocol=recipe.family,
@@ -609,3 +616,141 @@ def append_specialized_test_episodes(
             suffix=f"delay-{recipe.recovery_probe_delay_ms}",
         )
     return plans, rows
+
+
+def build_budgeted_episode_plan(
+    recipes: Sequence[TargetedRecipe],
+    *,
+    preferred_positive_targets: Mapping[str, int],
+    preferred_hard_negative_targets: Mapping[str, int],
+    minimum_positive_targets: Mapping[str, int],
+    minimum_hard_negative_targets: Mapping[str, int],
+    minimum_transition_count: int = 10_000,
+    maximum_transition_count: int = 30_000,
+    search_steps: int = 100,
+) -> Tuple[List[ProtocolTrajectory], List[Dict[str, Any]], Dict[str, Any]]:
+    """Maximize independent support inside an explicit transition budget.
+
+    Preferred support remains the scientific target, while the minimum maps
+    define the smallest acceptable diagnostic dataset.  The planner searches
+    deterministically between them and includes all specialized test episodes
+    in every budget calculation.
+    """
+
+    preferred_positive = dict(preferred_positive_targets)
+    preferred_negative = dict(preferred_hard_negative_targets)
+    minimum_positive = dict(minimum_positive_targets)
+    minimum_negative = dict(minimum_hard_negative_targets)
+    split_names = set(preferred_positive)
+    if not split_names or not (
+        split_names
+        == set(preferred_negative)
+        == set(minimum_positive)
+        == set(minimum_negative)
+    ):
+        raise ValueError("budgeted support maps must use the same non-empty splits")
+    if int(minimum_transition_count) <= 0:
+        raise ValueError("minimum transition budget must be positive")
+    if int(maximum_transition_count) < int(minimum_transition_count):
+        raise ValueError("maximum transition budget is below its minimum")
+    if int(search_steps) <= 0:
+        raise ValueError("budget search steps must be positive")
+    for split in split_names:
+        if not (
+            0 <= int(minimum_positive[split]) <= int(preferred_positive[split])
+            and 0
+            <= int(minimum_negative[split])
+            <= int(preferred_negative[split])
+        ):
+            raise ValueError(
+                f"invalid preferred/minimum support ordering for {split}"
+            )
+
+    attempts = []
+    observed_targets = set()
+    selected = None
+    for step in range(int(search_steps), -1, -1):
+        fraction = step / float(search_steps)
+
+        def interpolate(
+            preferred: Mapping[str, int], minimum: Mapping[str, int]
+        ) -> Dict[str, int]:
+            return {
+                split: int(minimum[split])
+                + int(
+                    round(
+                        (int(preferred[split]) - int(minimum[split]))
+                        * fraction
+                    )
+                )
+                for split in sorted(split_names)
+            }
+
+        positive = interpolate(preferred_positive, minimum_positive)
+        negative = interpolate(preferred_negative, minimum_negative)
+        target_key = (
+            tuple(sorted(positive.items())),
+            tuple(sorted(negative.items())),
+        )
+        if target_key in observed_targets:
+            continue
+        observed_targets.add(target_key)
+        trajectories, episode_rows = build_balanced_episode_plan(
+            recipes,
+            positive_targets=positive,
+            hard_negative_targets=negative,
+        )
+        trajectories, episode_rows = append_specialized_test_episodes(
+            trajectories, episode_rows, recipes
+        )
+        transition_count = sum(
+            int(row.duration_ms) for row in trajectories
+        )
+        attempt = {
+            "scale": fraction,
+            "positive_targets": positive,
+            "hard_negative_targets": negative,
+            "trajectory_count": len(trajectories),
+            "transition_count": transition_count,
+        }
+        attempts.append(attempt)
+        if (
+            int(minimum_transition_count)
+            <= transition_count
+            <= int(maximum_transition_count)
+        ):
+            selected = (trajectories, episode_rows, attempt)
+            break
+
+    if selected is None:
+        smallest = min(attempts, key=lambda row: row["transition_count"])
+        largest = max(attempts, key=lambda row: row["transition_count"])
+        raise ValueError(
+            "no support plan fits the transition budget; "
+            f"observed range={smallest['transition_count']}-"
+            f"{largest['transition_count']}, requested="
+            f"{int(minimum_transition_count)}-{int(maximum_transition_count)}"
+        )
+
+    trajectories, episode_rows, effective = selected
+    report = {
+        "valid": True,
+        "policy": "maximum_independent_support_within_transition_budget",
+        "transition_budget": {
+            "minimum": int(minimum_transition_count),
+            "maximum": int(maximum_transition_count),
+        },
+        "preferred_positive_targets": preferred_positive,
+        "preferred_hard_negative_targets": preferred_negative,
+        "minimum_positive_targets": minimum_positive,
+        "minimum_hard_negative_targets": minimum_negative,
+        "effective_positive_targets": dict(effective["positive_targets"]),
+        "effective_hard_negative_targets": dict(
+            effective["hard_negative_targets"]
+        ),
+        "selected_scale": float(effective["scale"]),
+        "trajectory_count": int(effective["trajectory_count"]),
+        "transition_count": int(effective["transition_count"]),
+        "attempt_count": len(attempts),
+    }
+    return trajectories, episode_rows, report

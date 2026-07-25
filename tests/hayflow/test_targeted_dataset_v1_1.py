@@ -8,10 +8,12 @@ from src.hayflow_data import (
     ProtocolTrajectory,
     TargetedRecipe,
     build_balanced_episode_plan,
+    build_budgeted_episode_plan,
     append_specialized_test_episodes,
     build_input_views,
     select_adaptive_recipe_brackets,
     summarize_independent_support,
+    validate_minimum_support,
 )
 from src.hayflow_teacher.event_extractor import (
     EventDefinition,
@@ -480,6 +482,117 @@ class TargetedProtocolPlannerTest(unittest.TestCase):
             ],
             3,
         )
+
+    def test_budgeted_planner_scales_support_before_expensive_generation(self):
+        synaptic = InputAction("synaptic_event", 0.25, synapse_id=4)
+        classes = (
+            "axonal_spike",
+            "somatic_spike",
+            "backpropagating_ap",
+            "calcium_spike",
+            "nmda_spike",
+            "nmda_plateau",
+        )
+        recipes = []
+        for index, event_class in enumerate(classes):
+            branch = f"branch-{event_class}"
+            recipes.extend(
+                [
+                    TargetedRecipe(
+                        f"positive-{event_class}",
+                        f"family-{event_class}",
+                        "positive",
+                        80,
+                        {3: (synaptic,)},
+                        positive_for=(event_class,),
+                        branch_id=branch,
+                        boundary_distance=0.1,
+                    ),
+                    TargetedRecipe(
+                        f"negative-{event_class}",
+                        f"family-{event_class}",
+                        "negative",
+                        80,
+                        {3: (synaptic,)},
+                        hard_negative_for=(event_class,),
+                        branch_id=branch,
+                        boundary_distance=-0.1,
+                    ),
+                ]
+            )
+        recipes.append(
+            TargetedRecipe(
+                "heldout",
+                "heldout",
+                "heldout",
+                80,
+                {3: (synaptic,)},
+                hard_negative_for=classes,
+                branch_id="heldout-branch",
+                metadata={"train_eligible": False},
+            )
+        )
+        recipes.append(
+            TargetedRecipe(
+                "recovery",
+                "family-axonal_spike",
+                "recovery",
+                200,
+                {3: (synaptic,), 23: (synaptic,)},
+                positive_for=classes,
+                branch_id="branch-axonal_spike",
+                recovery_probe_delay_ms=20.0,
+                metadata={
+                    "train_eligible": False,
+                    "recovery_probe": True,
+                    "pilot_validated": True,
+                },
+            )
+        )
+        preferred_positive = {
+            "train": 64,
+            "validation": 16,
+            "deterministic_test": 16,
+        }
+        preferred_negative = {
+            "train": 128,
+            "validation": 32,
+            "deterministic_test": 32,
+        }
+        minimum_positive = {
+            "train": 8,
+            "validation": 4,
+            "deterministic_test": 4,
+        }
+        minimum_negative = {
+            "train": 16,
+            "validation": 8,
+            "deterministic_test": 8,
+        }
+        plans, rows, report = build_budgeted_episode_plan(
+            recipes,
+            preferred_positive_targets=preferred_positive,
+            preferred_hard_negative_targets=preferred_negative,
+            minimum_positive_targets=minimum_positive,
+            minimum_hard_negative_targets=minimum_negative,
+            minimum_transition_count=10_000,
+            maximum_transition_count=30_000,
+        )
+        self.assertTrue(report["valid"])
+        self.assertGreaterEqual(report["transition_count"], 10_000)
+        self.assertLessEqual(report["transition_count"], 30_000)
+        self.assertGreater(report["attempt_count"], 1)
+        self.assertEqual(
+            report["transition_count"],
+            sum(row.duration_ms for row in plans),
+        )
+        support = summarize_independent_support(rows)
+        validation = validate_minimum_support(
+            support,
+            positive_targets=report["effective_positive_targets"],
+            hard_negative_targets=report["effective_hard_negative_targets"],
+        )
+        self.assertTrue(validation["valid"])
 
     def test_specialized_pairs_share_only_the_intended_snapshot(self):
         synaptic = InputAction(

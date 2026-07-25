@@ -60,9 +60,15 @@ biological_pilot:
   recovery_min_pv: 0.75
 
 support_targets:
-  train: {positive_per_class: 64, hard_negative_per_class: 128}
-  validation: {positive_per_class: 16, hard_negative_per_class: 32}
-  deterministic_test: {positive_per_class: 16, hard_negative_per_class: 32}
+  preferred:
+    train: {positive_per_class: 64, hard_negative_per_class: 128}
+    validation: {positive_per_class: 16, hard_negative_per_class: 32}
+    deterministic_test: {positive_per_class: 16, hard_negative_per_class: 32}
+  minimum_diagnostic:
+    train: {positive_per_class: 8, hard_negative_per_class: 16}
+    validation: {positive_per_class: 4, hard_negative_per_class: 8}
+    deterministic_test: {positive_per_class: 4, hard_negative_per_class: 8}
+  budget_search_steps: 100
   count_unit: independent_episode
 
 splits:

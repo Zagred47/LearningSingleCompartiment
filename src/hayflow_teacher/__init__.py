@@ -56,12 +56,14 @@ from .diagnostic_dataset_v1_1 import (
     assess_causal_bap,
     select_causal_bap_assist,
 )
+from .bap_support_topup import BapValidationSupportTopupSession
 
 __all__ = [
     "CausalReleaseRecorder",
     "TargetedDiagnosticDatasetSession",
     "assess_causal_bap",
     "select_causal_bap_assist",
+    "BapValidationSupportTopupSession",
     "BoundaryState",
     "default_event_definitions",
     "detect_spikes",

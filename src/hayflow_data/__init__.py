@@ -61,6 +61,14 @@ from .reconditioned_flowmap import (
     ReconditioningConfig,
     distribution_summary,
 )
+from .support_topup import (
+    BAP_SUPPORT_TOPUP_EPISODE_COUNT,
+    BAP_SUPPORT_TOPUP_SCHEMA_VERSION,
+    BAP_SUPPORT_TOPUP_SEED_START,
+    build_bap_validation_topup_plan,
+    select_bap_positive_recipe,
+    validate_composite_support,
+)
 
 __all__ = [
     "CAUSAL_OBSERVATION_PHASE",
@@ -111,4 +119,10 @@ __all__ = [
     "ReconditionedStateNormalizer",
     "ReconditioningConfig",
     "distribution_summary",
+    "BAP_SUPPORT_TOPUP_EPISODE_COUNT",
+    "BAP_SUPPORT_TOPUP_SCHEMA_VERSION",
+    "BAP_SUPPORT_TOPUP_SEED_START",
+    "build_bap_validation_topup_plan",
+    "select_bap_positive_recipe",
+    "validate_composite_support",
 ]

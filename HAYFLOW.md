@@ -313,3 +313,24 @@ result, identifiability limits, and answers the six predeclared comparisons
 against B1, U1, privileged supervision, the original negative drift, and
 branching collapse. It explicitly does not test Hines coupling, persistent
 latents, morphology reduction, Mamba, or S4.
+
+## Targeted dataset v1.1 and BAP validation supplement
+
+`notebooks/03_build_targeted_transition_dataset_v1_1.ipynb` extends the data
+contract with causal release outcomes and targeted event-boundary protocols.
+Its first complete shard contains 29,240 transitions whose exhaustive replay
+passed with zero failures.  The realized biological support missed only one
+hard acceptance floor: validation contained three independent positive
+backpropagating-AP episodes instead of the preregistered minimum of four.
+
+`notebooks/03b_bap_validation_support_topup.ipynb` corrects that finite-sample
+shortfall without regenerating, editing, or physically merging the base shard.
+It verifies the Quick-Saved base and its replay proof, preregisters a fixed
+batch of eight validation episodes from the already validated soma-only BAP
+recipe, assigns new Random123 seeds and new conditioned snapshots, and retains
+all eight outcomes.  Only the 640 new transitions are replayed.  Acceptance
+requires at least one new positive BAP episode and the minimum support contract
+to pass on the logical union.  Failed positive-intent episodes are not relabeled
+as hard negatives, event thresholds are unchanged, and no post-hoc seed
+selection is permitted.  The composite manifest binds both physical shards by
+SHA-256 while keeping the 6 GiB base in read-only Kaggle storage.

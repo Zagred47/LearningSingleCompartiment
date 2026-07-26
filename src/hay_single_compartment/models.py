@@ -26,6 +26,7 @@ class RecurrentSurrogate(nn.Module):
         layers: int = 2,
         architecture: str = "lstm",
         dropout: float = 0.1,
+        **_: object,
     ) -> None:
         super().__init__()
         architecture = architecture.lower()
@@ -89,10 +90,13 @@ class ConvLSTMSurrogate(nn.Module):
         hidden_dim: int = 128,
         layers: int = 2,
         dropout: float = 0.1,
+        width_multiplier: int = 2,
         **_: object,
     ) -> None:
         super().__init__()
-        width = hidden_dim * 2
+        if width_multiplier < 1:
+            raise ValueError("width_multiplier must be positive")
+        width = hidden_dim * width_multiplier
         self.state_dim = state_dim
         self.architecture = "conv_lstm"
         self.context_steps = 20

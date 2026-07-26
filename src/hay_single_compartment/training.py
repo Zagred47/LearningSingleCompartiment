@@ -122,9 +122,15 @@ def train_model(
     batch_size: int = 64,
     hidden_dim: int = 128,
     layers: int = 2,
+    width_multiplier: int = 2,
+    dropout: float = 0.1,
     learning_rate: float = 1e-3,
     seed: int = 2026,
     device: str | None = None,
+    run_name: str | None = None,
+    patience: int | None = None,
+    minimum_epochs: int = 1,
+    use_amp: bool = True,
 ) -> Dict[str, object]:
     """Train one architecture with validation checkpointing."""
 
@@ -143,29 +149,58 @@ def train_model(
         state_dim=len(STATE_NAMES),
         hidden_dim=hidden_dim,
         layers=layers,
+        width_multiplier=width_multiplier,
+        dropout=dropout,
     ).to(device_obj)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(1, epochs), eta_min=learning_rate * 0.05
+    )
+    amp_enabled = bool(use_amp and device_obj.type == "cuda")
+    try:
+        scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
+    except (AttributeError, TypeError):  # PyTorch 2.0--2.2 compatibility.
+        scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
     best_loss = float("inf")
     best_state = None
     history = []
+    stale_epochs = 0
     for epoch in range(1, epochs + 1):
         model.train()
         train_losses = []
         for features, target in train_loader:
             features, target = features.to(device_obj), target.to(device_obj)
             optimizer.zero_grad(set_to_none=True)
-            loss = _loss(model(features), target)
-            loss.backward()
+            with torch.autocast(
+                device_type=device_obj.type,
+                dtype=torch.float16,
+                enabled=amp_enabled,
+            ):
+                loss = _loss(model(features), target)
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             train_losses.append(float(loss.detach().cpu()))
         validation_loss = evaluate_loader(model, validation_loader, device_obj)
         history.append(
-            {"epoch": epoch, "train_loss": float(np.mean(train_losses)), "validation_loss": validation_loss}
+            {
+                "epoch": epoch,
+                "train_loss": float(np.mean(train_losses)),
+                "validation_loss": validation_loss,
+                "learning_rate": float(optimizer.param_groups[0]["lr"]),
+            }
         )
         if validation_loss < best_loss:
             best_loss = validation_loss
             best_state = {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
+            stale_epochs = 0
+        else:
+            stale_epochs += 1
+        scheduler.step()
+        if patience is not None and epoch >= minimum_epochs and stale_epochs >= patience:
+            break
     if best_state is None:
         raise RuntimeError("training produced no checkpoint")
     model.load_state_dict(best_state)
@@ -173,12 +208,18 @@ def train_model(
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = output_dir / f"{architecture}.pt"
+    artifact_name = run_name or architecture
+    checkpoint_path = output_dir / f"{artifact_name}.pt"
     torch.save(
         {
             "architecture": architecture,
             "model_state": best_state,
-            "model_kwargs": {"hidden_dim": hidden_dim, "layers": layers},
+            "model_kwargs": {
+                "hidden_dim": hidden_dim,
+                "layers": layers,
+                "width_multiplier": width_multiplier,
+                "dropout": dropout,
+            },
             "normalization": normalization.to_dict(),
             "state_names": list(STATE_NAMES),
             "input_names": list(INPUT_NAMES),
@@ -187,14 +228,17 @@ def train_model(
     )
     report: Dict[str, object] = {
         "architecture": architecture,
+        "run_name": artifact_name,
         "device": str(device_obj),
+        "amp": amp_enabled,
         "parameters": int(sum(parameter.numel() for parameter in model.parameters())),
+        "epochs_trained": len(history),
         "best_validation_loss": best_loss,
         "test": metrics,
         "history": history,
         "checkpoint": str(checkpoint_path),
     }
-    (output_dir / f"{architecture}.metrics.json").write_text(
+    (output_dir / f"{artifact_name}.metrics.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
     )
     return report

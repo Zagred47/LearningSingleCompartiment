@@ -19,6 +19,16 @@ def test_unknown_architecture_is_rejected():
         build_model("transformer", input_dim=21, state_dim=17)
 
 
+def test_scaled_conv_lstm_has_more_capacity():
+    base = build_model("conv_lstm", 21, 17, hidden_dim=16, layers=2)
+    scaled = build_model(
+        "conv_lstm", 21, 17, hidden_dim=24, layers=3, width_multiplier=3
+    )
+    assert sum(p.numel() for p in scaled.parameters()) > 4 * sum(
+        p.numel() for p in base.parameters()
+    )
+
+
 def test_conv_lstm_stepwise_matches_causal_full_sequence():
     torch.manual_seed(4)
     model = build_model("conv_lstm", input_dim=21, state_dim=17, hidden_dim=8, layers=1)

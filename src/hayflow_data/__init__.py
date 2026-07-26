@@ -71,6 +71,23 @@ from .support_topup import (
     select_disjoint_topup_seed_start,
     validate_composite_support,
 )
+from .composite_flowmap import (
+    EXPECTED_BASE_HDF_SHA256,
+    EXPECTED_EPISODES,
+    EXPECTED_PROTOCOL_PLAN_SHA256,
+    EXPECTED_TOPUP_CONTRACT_SHA256,
+    EXPECTED_TOPUP_HDF_SHA256,
+    EXPECTED_TRANSITIONS,
+    INPUT_EVENT_FEATURE_NAMES,
+    INPUT_VIEWS,
+    CompositeFlowmapBundle,
+    CompositeShard,
+    CompositeTransitionStore,
+    ReleaseFlowmapLayout,
+    classify_regime,
+    input_view_schema,
+    prepare_composite_flowmap_bundle,
+)
 
 __all__ = [
     "CAUSAL_OBSERVATION_PHASE",
@@ -129,4 +146,19 @@ __all__ = [
     "select_bap_positive_recipe",
     "select_disjoint_topup_seed_start",
     "validate_composite_support",
+    "EXPECTED_BASE_HDF_SHA256",
+    "EXPECTED_EPISODES",
+    "EXPECTED_PROTOCOL_PLAN_SHA256",
+    "EXPECTED_TOPUP_CONTRACT_SHA256",
+    "EXPECTED_TOPUP_HDF_SHA256",
+    "EXPECTED_TRANSITIONS",
+    "INPUT_EVENT_FEATURE_NAMES",
+    "INPUT_VIEWS",
+    "CompositeFlowmapBundle",
+    "CompositeShard",
+    "CompositeTransitionStore",
+    "ReleaseFlowmapLayout",
+    "classify_regime",
+    "input_view_schema",
+    "prepare_composite_flowmap_bundle",
 ]

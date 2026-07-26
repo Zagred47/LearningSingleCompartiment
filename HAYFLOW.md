@@ -346,3 +346,30 @@ sections already exist.  A fresh Python process is mandatory because loading a
 second 196-section Hay cell would leave 392 sections and make the imported
 SaveState structurally incompatible; variable persistence must therefore be
 disabled for this notebook.
+
+## Release identifiability and flow-map v1.1
+
+`notebooks/04_release_identifiability_and_flowmap_v1_1.ipynb` consumes the
+validated base plus BAP top-up only through `composite_dataset_manifest.json`.
+Its shard-aware reader exposes one logical index while retaining the physical
+shard and local row, keeps the top-up in validation, and reads full states
+lazily without merging the HDF5 stores.  The four preregistered SHA-256 values,
+369 episodes, 29,880 transitions, split isolation, cross-shard seed/snapshot
+disjointness, and event counts are hard preflight gates.
+
+The experiment compares scheduled, causal-Random123, and realized synaptic
+inputs.  Because the stored realized view omits failed events, the reader joins
+every scheduled event to the exact pre-membrane causal release record and thus
+retains both successes and failures.  Random123 stream, episode, trajectory,
+and snapshot identifiers are excluded from model features.  No `S_(t+1)` value
+is used to construct any input view.
+
+B0, deterministic dual ridge, and the unchanged reconditioned B3 backbone are
+evaluated with episode-aware stratification.  B3 uses the hurdle representation,
+gate-logit transform, event-aware U2 encoding, three common seeds, P0 as the
+primary objective, and one small selective privileged ablation.  Outputs cover
+pooled event counts and PR-AUC, one-step and 2/4/8/16/32 ms rollout voltage
+fidelity, regional drift, peak attenuation, near/far/release branching,
+recovery, state sufficiency, and episode bootstrap intervals.  The report can
+recommend the first HayFlow-Hines prototype but does not implement Hines,
+latents, morphology reduction, S4, Mamba, CUDA kernels, or mixed precision.

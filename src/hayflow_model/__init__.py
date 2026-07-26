@@ -22,6 +22,11 @@ from .reconditioned_experiment import (
     ReconditionedFlowmapExperiment,
     ReconditionedRunSpec,
 )
+from .release_identifiability_experiment import (
+    ReleaseExperimentConfig,
+    ReleaseIdentifiabilityExperiment,
+    ReleaseRunSpec,
+)
 
 __all__ = [
     "DualRidgeBaseline",
@@ -40,4 +45,7 @@ __all__ = [
     "ReconditionedExperimentConfig",
     "ReconditionedFlowmapExperiment",
     "ReconditionedRunSpec",
+    "ReleaseExperimentConfig",
+    "ReleaseIdentifiabilityExperiment",
+    "ReleaseRunSpec",
 ]

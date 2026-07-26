@@ -2,7 +2,7 @@
 
 Un singolo compartimento conduttanza-based, ispirato ai meccanismi del neurone
 L5PC di Hay, pensato per generare dataset sequenziali piccoli e confrontare
-surrogati neurali come MLP, RNN, GRU e LSTM.
+surrogati neurali come MLP, RNN, GRU, LSTM e una ConvLSTM temporale capiente.
 
 > **Ambito scientifico.** Questo è un modello ridotto *Hay-inspired*: conserva
 > famiglie di canali e memoria dinamica interessanti, ma non è numericamente
@@ -56,7 +56,8 @@ usare **Run all**. Il notebook:
 1. installa il package locale;
 2. genera e valida il dataset HDF5;
 3. visualizza input, tensione, calcio e conduttanze;
-4. addestra MLP, GRU e LSTM con la stessa pipeline;
+4. addestra MLP, GRU, LSTM e ConvLSTM con la stessa pipeline; la ConvLSTM usa
+   convoluzioni causali dilatate, circa un milione di parametri e 20 epoche;
 5. confronta RMSE one-step, baseline di persistenza e rollout autoregressivo;
 6. salva checkpoint e metriche in `/kaggle/working/hay_single_results`.
 

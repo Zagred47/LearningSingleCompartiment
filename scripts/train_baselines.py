@@ -14,7 +14,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("dataset", type=Path)
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/models"))
-    parser.add_argument("--architectures", nargs="+", default=["mlp", "gru", "lstm"])
+    parser.add_argument(
+        "--architectures", nargs="+", default=["mlp", "gru", "lstm", "conv_lstm"]
+    )
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()

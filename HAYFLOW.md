@@ -337,3 +337,7 @@ SHA-256 while keeping the 6 GiB base in Kaggle input storage.  When KaggleHub
 packages the multi-file base as `archive.zip`, notebook `03b` extracts it under
 `/kaggle/temp` with progress and ETA; the temporary copy is never included in
 the notebook output archive.
+Top-up seed allocation is itself bound into the preregistered plan: a fixed
+gap of 10,000 is added to the maximum seed present in the base episode table,
+then one contiguous block is reserved.  This makes disjointness deterministic
+and outcome-blind instead of relying on an assumed unused numeric range.

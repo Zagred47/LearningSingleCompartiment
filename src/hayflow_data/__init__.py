@@ -64,9 +64,11 @@ from .reconditioned_flowmap import (
 from .support_topup import (
     BAP_SUPPORT_TOPUP_EPISODE_COUNT,
     BAP_SUPPORT_TOPUP_SCHEMA_VERSION,
+    BAP_SUPPORT_TOPUP_SEED_GAP,
     BAP_SUPPORT_TOPUP_SEED_START,
     build_bap_validation_topup_plan,
     select_bap_positive_recipe,
+    select_disjoint_topup_seed_start,
     validate_composite_support,
 )
 
@@ -121,8 +123,10 @@ __all__ = [
     "distribution_summary",
     "BAP_SUPPORT_TOPUP_EPISODE_COUNT",
     "BAP_SUPPORT_TOPUP_SCHEMA_VERSION",
+    "BAP_SUPPORT_TOPUP_SEED_GAP",
     "BAP_SUPPORT_TOPUP_SEED_START",
     "build_bap_validation_topup_plan",
     "select_bap_positive_recipe",
+    "select_disjoint_topup_seed_start",
     "validate_composite_support",
 ]

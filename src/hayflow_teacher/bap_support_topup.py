@@ -16,6 +16,7 @@ from ..hayflow_data import (
     TARGETED_DATASET_SCHEMA_VERSION,
     build_bap_validation_topup_plan,
     select_bap_positive_recipe,
+    select_disjoint_topup_seed_start,
     summarize_independent_support,
     validate_composite_support,
     validate_hdf5_store,
@@ -256,13 +257,20 @@ class BapValidationSupportTopupSession(TargetedDiagnosticDatasetSession):
             )
         )
         recipe = select_bap_positive_recipe(catalog)
-        protocols, plan = build_bap_validation_topup_plan(recipe)
+        base_episodes = self._normalized_episodes(
+            self.pd.read_parquet(self.base_dataset / "episodes.parquet")
+        )
+        seed_selection = select_disjoint_topup_seed_start(base_episodes)
+        protocols, plan = build_bap_validation_topup_plan(
+            recipe, seed_start=seed_selection["seed_start"]
+        )
         plan.update(
             {
                 "base_transition_store_sha256": self.base_verification[
                     "transition_store_record"
                 ]["sha256"],
                 "teacher_commit": PINNED_TEACHER_COMMIT,
+                "seed_selection": seed_selection,
             }
         )
         plan["topup_contract_sha256"] = canonical_json_sha256({"plan": plan})
@@ -364,6 +372,7 @@ class BapValidationSupportTopupSession(TargetedDiagnosticDatasetSession):
             "checkpoint_kind": "complete_topup_exhaustive_replay",
             "transition_store_sha256": topup_sha,
             "protocol_plan_sha256": self.topup_plan["protocol_plan_sha256"],
+            "topup_contract_sha256": self.topup_plan["topup_contract_sha256"],
             "exhaustive_replay": replay,
         }
         write_json(self.output_dir / "topup_replay_checkpoint.json", checkpoint)
@@ -428,6 +437,7 @@ class BapValidationSupportTopupSession(TargetedDiagnosticDatasetSession):
                 "transition_count": sum(int(row.duration_ms) for row in protocols),
             },
             "topup_plan_sha256": self.topup_plan["protocol_plan_sha256"],
+            "topup_contract_sha256": self.topup_plan["topup_contract_sha256"],
             "validation_report": "validation_report.json",
             "valid": not blockers,
         }

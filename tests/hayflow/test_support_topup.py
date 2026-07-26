@@ -6,6 +6,7 @@ from src.hayflow_data import (
     BAP_SUPPORT_TOPUP_EPISODE_COUNT,
     build_bap_validation_topup_plan,
     select_bap_positive_recipe,
+    select_disjoint_topup_seed_start,
     validate_composite_support,
 )
 
@@ -87,6 +88,18 @@ def test_recipe_selection_rejects_ambiguity():
     pilot["recipes"][1]["recipe_id"] = "another"
     with pytest.raises(RuntimeError, match="exactly one"):
         select_bap_positive_recipe(pilot)
+
+
+def test_seed_block_is_derived_beyond_base_namespace():
+    base = [
+        _episode("base-a", 720001, "base-s1"),
+        _episode("base-b", 980123, "base-s2"),
+    ]
+    selection = select_disjoint_topup_seed_start(base)
+    assert selection["seed_start"] == 990123
+    assert selection["selected_seeds"] == list(range(990123, 990131))
+    assert selection["overlap"] == []
+    assert selection["selection_was_outcome_blind"] is True
 
 
 def test_plan_hash_binds_actions():

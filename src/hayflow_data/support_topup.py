@@ -11,9 +11,10 @@ from .targeted_contract import summarize_independent_support, validate_minimum_s
 from .targeted_protocols import TargetedRecipe, action_schedule_from_json
 
 
-BAP_SUPPORT_TOPUP_SCHEMA_VERSION = "1.0.0"
+BAP_SUPPORT_TOPUP_SCHEMA_VERSION = "1.0.1"
 BAP_SUPPORT_TOPUP_EPISODE_COUNT = 8
 BAP_SUPPORT_TOPUP_SEED_START = 720_001
+BAP_SUPPORT_TOPUP_SEED_GAP = 10_000
 
 
 def _canonical_sha256(payload: Mapping[str, Any]) -> str:
@@ -156,6 +157,40 @@ def build_bap_validation_topup_plan(
         {"plan": plan_payload}
     )
     return trajectories, plan_payload
+
+
+def select_disjoint_topup_seed_start(
+    base_episodes: Sequence[Mapping[str, Any]],
+    *,
+    episode_count: int = BAP_SUPPORT_TOPUP_EPISODE_COUNT,
+    gap: int = BAP_SUPPORT_TOPUP_SEED_GAP,
+) -> Dict[str, Any]:
+    """Select an outcome-blind seed block strictly beyond the base namespace."""
+
+    seeds = sorted({int(row["seed"]) for row in base_episodes})
+    if not seeds:
+        raise ValueError("base episodes contain no seeds")
+    if int(episode_count) <= 0 or int(gap) <= 0:
+        raise ValueError("episode_count and seed gap must be positive")
+    start = int(seeds[-1]) + int(gap)
+    selected = list(range(start, start + int(episode_count)))
+    overlap = sorted(set(seeds) & set(selected))
+    if overlap:
+        raise AssertionError(f"derived top-up seeds overlap the base: {overlap}")
+    if selected[-1] >= 2**31:
+        raise ValueError("derived top-up seed block exceeds signed 32-bit range")
+    return {
+        "policy": "contiguous_block_after_base_maximum_plus_fixed_gap",
+        "base_seed_count": len(seeds),
+        "base_minimum_seed": seeds[0],
+        "base_maximum_seed": seeds[-1],
+        "fixed_gap": int(gap),
+        "seed_start": start,
+        "seed_end": selected[-1],
+        "selected_seeds": selected,
+        "overlap": overlap,
+        "selection_was_outcome_blind": True,
+    }
 
 
 def validate_composite_support(

@@ -341,3 +341,8 @@ Top-up seed allocation is itself bound into the preregistered plan: a fixed
 gap of 10,000 is added to the maximum seed present in the base episode table,
 then one contiguous block is reserved.  This makes disjointness deterministic
 and outcome-blind instead of relying on an assumed unused numeric range.
+The top-up session also refuses to instantiate the teacher when any NEURON
+sections already exist.  A fresh Python process is mandatory because loading a
+second 196-section Hay cell would leave 392 sections and make the imported
+SaveState structurally incompatible; variable persistence must therefore be
+disabled for this notebook.

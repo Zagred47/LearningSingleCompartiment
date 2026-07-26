@@ -95,6 +95,23 @@ class BapValidationSupportTopupSession(TargetedDiagnosticDatasetSession):
         self.base_verification: Dict[str, Any] = {}
         self.topup_plan: Dict[str, Any] = {}
 
+    def prepare_teacher(self) -> Dict[str, Any]:
+        """Reject a reused NEURON process before duplicating the morphology."""
+
+        try:
+            from neuron import h
+        except ImportError:
+            return super().prepare_teacher()
+        existing_sections = sum(1 for _ in h.allsec())
+        if existing_sections:
+            raise RuntimeError(
+                "BAP top-up requires a fresh Python/NEURON process: "
+                f"{existing_sections} sections already exist before teacher setup. "
+                "Stop the Kaggle session, disable variable persistence, start a "
+                "new session, and run the notebook exactly once from the top."
+            )
+        return super().prepare_teacher()
+
     @staticmethod
     def _normalized_episodes(frame: Any) -> List[Dict[str, Any]]:
         rows = []

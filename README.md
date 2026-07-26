@@ -1,68 +1,87 @@
-## The ELM: an Efficient and Expressive Phenomenological Neuron Model Can Solve Long-Horizon Tasks
+# Hay Single Compartment
 
-This repository features a minimal implementation of the (Branch) Expressive Leaky Memory neuron in PyTorch.
-Notebooks to train and evaluate on NeuronIO are provided, as well as pre-trained models of various sizes.
+Un singolo compartimento conduttanza-based, ispirato ai meccanismi del neurone
+L5PC di Hay, pensato per generare dataset sequenziali piccoli e confrontare
+surrogati neurali come MLP, RNN, GRU e LSTM.
 
-HayFlow, the morphology-aware surrogate of the full Hay L5PC teacher, is being
-developed as a separate set of packages in this repository. Its package
-boundaries, provenance rules, and first diagnostic milestone are documented in
-[HAYFLOW.md](./HAYFLOW.md).
+> **Ambito scientifico.** Questo è un modello ridotto *Hay-inspired*: conserva
+> famiglie di canali e memoria dinamica interessanti, ma non è numericamente
+> equivalente al modello Hay multicompartmentale originale. Non richiede
+> NEURON né meccanismi NMODL compilati.
 
-![The ELM neuron](./elm_neuron_sketch.png)
+## Cosa viene simulato
 
-### Installation:
+Esiste una sola tensione di membrana. Il suo stato Markoviano comprende 17
+variabili:
 
-1. Create the conda environment with `conda env create -f elm_env.yml`
-2. Once installed, activate the environment with `conda activate elm_env`
+- tensione e calcio intracellulare;
+- gate `NaTa_t`, `Nap_Et2`, `Kdr`, `SKv3_1`, `Im`, `Ih`, `Ca_LVAst`,
+  `Ca_HVA` e `SK_E2`;
+- conduttanze sinaptiche AMPA, NMDA voltage-dependent e GABA-A.
 
-### Models:
+Gli input casuali combinano corrente Ornstein-Uhlenbeck, impulsi transitori e
+conteggi di eventi sinaptici Poisson. Un processo a regimi alterna fasi quiete,
+bilanciate, eccitatorie, inibitorie e burst. Ogni traiettoria usa un seed
+distinto, e train/validation/test sono separati a livello di traiettoria.
 
-The __models__ folder contains various sized Branch-ELM neuron models pre-trained on NeuronIO.
+Il file HDF5 salva, senza stato nascosto del simulatore:
 
-|  $d_m$    | 1      | 2      | 3      | 5      | 7      | 10     | 15     | 20     | 25     | 30     | 40     | 50     | 75     | 100    |
-|-----------|--------|--------|--------|--------|--------|--------|--------|--------|--------|--------|--------|--------|--------|--------|
-| #params   | 4601   | 4708   | 4823   | 5077   | 5363   | 5852   | 6827   | 8002   | 9377   | 10952  | 14702  | 19252  | 34127  | 54002  |
-| AUC       | 0.9437 | 0.9582 | 0.9558 | 0.9757 | 0.9827 | 0.9878 | 0.9915 | 0.9922 | 0.9926 | 0.9929 | 0.9934 | 0.9934 | 0.9938 | 0.9935 |
+- `states`: tutte le 17 variabili a ogni boundary temporale;
+- `inputs`: corrente iniettata e conteggi AMPA/NMDA/GABA;
+- `currents`: 13 correnti individuali più la corrente ionica totale;
+- `spikes`, `regimes`, griglia temporale, seed, configurazione e nomi/ordine
+  delle feature.
 
-We also include a best effort trained ELM neuron that achieves 0.9946 AUC with $d_m=100$.
+## Avvio rapido
 
-### Notebooks:
-- __train_elm_on_shd.ipynb__: train an ELM neuron on SHD or SHD-Adding Dataset.
-- __train_elm_on_neuronio.ipynb__: train an ELM neuron on NeuronIO Dataset.
-- __eval_elm_on_neuronio.ipynb__: evaluate provided models on the NeuronIO Dataset.
-- __neuronio_train_script__: script to train an ELM neuron on NeuronIO Dataset.
+```bash
+python -m venv .venv
+# Linux/macOS: source .venv/bin/activate
+# Windows: .venv\Scripts\activate
+pip install -e ".[test,notebook]"
+python scripts/generate_dataset.py
+python scripts/train_baselines.py artifacts/single_compartment.h5 --epochs 12
+pytest
+```
 
-### Code:
+La configurazione riproducibile è in `configs/default.json`. Il dataset di
+default contiene 12 traiettorie train, 3 validation e 3 test da 500 ms,
+campionate a 0,1 ms con integrazione interna a 0,025 ms.
 
-The __src__ folder contains the implementation and training/evaluation utilities.
+## Notebook Kaggle
 
-- __expressive_leaky_memory_neuron.py__: the implementation of the ELM model.
-- __neuronio__: files related to visualising, training and evaluating on the NeuronIO dataset.
-- __shd__: files related to downloading, training and evaluating on the Spiking Heidelberg Digits (SHD) dataset, and its SHD-Adding version.
+Aprire `notebooks/kaggle_single_compartment.ipynb`, attivare una GPU Kaggle e
+usare **Run all**. Il notebook:
 
-Note: the PyTorch implementation seems to be about 2x slower than the jax version unfortunately.
+1. installa il package locale;
+2. genera e valida il dataset HDF5;
+3. visualizza input, tensione, calcio e conduttanze;
+4. addestra MLP, GRU e LSTM con la stessa pipeline;
+5. confronta RMSE one-step, baseline di persistenza e rollout autoregressivo;
+6. salva checkpoint e metriche in `/kaggle/working/hay_single_results`.
 
-### Dataset:
+Per usare direttamente GitHub in Kaggle, clonare prima la repo nella directory
+`/kaggle/working` e aprire/eseguire il notebook dalla root del checkout.
 
-Running the NeuronIO related code requires downloading the dataset first (~115GB).
+## API essenziale
 
-- Download Train Data: [single-neurons-as-deep-nets-nmda-train-data](https://www.kaggle.com/datasets/selfishgene/single-neurons-as-deep-nets-nmda-train-data)
-- Download Test Data (Data_test): [single-neurons-as-deep-nets-nmda-test-data](https://www.kaggle.com/datasets/selfishgene/single-neurons-as-deep-nets-nmda-test-data)
-- For more information, please checkout the following repository: [neuron_as_deep_net](https://github.com/SelfishGene/neuron_as_deep_net)
+```python
+from hay_single_compartment import RandomDrive, SingleCompartmentHay
 
-Running the SHD related code is possible without seperately downloading the dataset (~0.5GB).
+inputs, regimes = RandomDrive().sample(steps=5000, dt_ms=0.1, seed=42)
+trajectory = SingleCompartmentHay().simulate(inputs, dt_ms=0.1, internal_dt_ms=0.025)
+print(trajectory["states"].shape)  # (5001, 17)
+```
 
-- The small SHD daset will automaticall be downloaded upon running the related notebook.
-- A dataloader for the introduced SHD-Adding dataset is provided in __/src/shd/shd_data_loader.py__
-- For more information onf SHD, please checkout the following website: [spiking-heidelberg-datasets-shd](https://zenkelab.org/resources/spiking-heidelberg-datasets-shd/)
+Gli artefatti generati (`.h5`, `.pt`, cartella `artifacts/`) sono ignorati da
+Git. I manifest JSON accanto ai dataset includono validazione e SHA-256.
 
-Running the LRA training/evaluation is not provided at the moment.
+## Struttura
 
-- To download the dataset, we recommend to checkout the following repository: [mega](https://github.com/facebookresearch/mega)
-- For the input preprocessing, please refer to our preprint.
-
-### Citation:
-
-If you like what you find, and use an ELM variant or the SHD-Adding dataset, please consider citing us:
-
-[1] Spieler, A., Rahaman, N., Martius, G., Schölkopf, B., & Levina, A. (2023). The ELM Neuron: an Efficient and Expressive Cortical Neuron Model Can Solve Long-Horizon Tasks. arXiv preprint arXiv:2306.16922.
+```text
+src/hay_single_compartment/  simulatore, protocolli, dataset, modelli, training
+scripts/                      CLI di generazione e training
+configs/default.json          esperimento riproducibile
+notebooks/                    workflow Kaggle completo
+tests/                        test numerici, schema HDF5 e modelli
+```

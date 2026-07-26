@@ -129,18 +129,10 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-####### CUSTOM #######
+####### PROJECT OUTPUTS #######
 
-tmp
-wandb
-shd_data
-
-# HayFlow generated data and local teacher build artifacts
-data/hayflow/
-artifacts/hayflow/
-artifacts/teacher_audit/
-artifacts/full_state_flowmap_baseline/
-artifacts/reconditioned_full_state_flowmap_baseline/
-L5PC_NEURON_simulation/x86_64/
-L5PC_NEURON_simulation/arm64/
-L5PC_NEURON_simulation/nrnmech.dll
+tmp/
+wandb/
+artifacts/
+*.h5
+*.pt

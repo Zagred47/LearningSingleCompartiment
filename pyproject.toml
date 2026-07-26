@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hay-single-compartment"
+version = "0.1.0"
+description = "One challenging Hay-inspired compartment for neural surrogate experiments"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = [
+  "numpy>=1.24",
+  "h5py>=3.8",
+  "torch>=2.0"
+]
+
+[project.optional-dependencies]
+notebook = ["jupyter>=1.0", "matplotlib>=3.7", "pandas>=2.0"]
+test = ["pytest>=7.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

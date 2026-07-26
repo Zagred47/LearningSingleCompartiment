@@ -1,0 +1,12 @@
+{
+  "dt_ms": 0.1,
+  "internal_dt_ms": 0.025,
+  "duration_ms": 500.0,
+  "warmup_ms": 100.0,
+  "seed": 2026,
+  "train_trajectories": 12,
+  "validation_trajectories": 3,
+  "test_trajectories": 3,
+  "membrane": {},
+  "protocol": {}
+}

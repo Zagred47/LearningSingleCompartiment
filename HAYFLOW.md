@@ -333,4 +333,7 @@ requires at least one new positive BAP episode and the minimum support contract
 to pass on the logical union.  Failed positive-intent episodes are not relabeled
 as hard negatives, event thresholds are unchanged, and no post-hoc seed
 selection is permitted.  The composite manifest binds both physical shards by
-SHA-256 while keeping the 6 GiB base in read-only Kaggle storage.
+SHA-256 while keeping the 6 GiB base in Kaggle input storage.  When KaggleHub
+packages the multi-file base as `archive.zip`, notebook `03b` extracts it under
+`/kaggle/temp` with progress and ETA; the temporary copy is never included in
+the notebook output archive.

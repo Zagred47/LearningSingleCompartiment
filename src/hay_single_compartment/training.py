@@ -82,6 +82,52 @@ def one_step_metrics(
 
 
 @torch.no_grad()
+def rollout_batch(
+    model,
+    initial_states: np.ndarray,
+    inputs: np.ndarray,
+    normalization: Normalization,
+    device: str | torch.device = "cpu",
+) -> np.ndarray:
+    """Autoregressively predict multiple trajectories in one batched rollout."""
+
+    device = torch.device(device)
+    model.eval()
+    initial_states = np.asarray(initial_states, dtype=np.float32)
+    inputs = np.asarray(inputs, dtype=np.float32)
+    if initial_states.ndim != 2 or initial_states.shape[1] != len(STATE_NAMES):
+        raise ValueError("initial_states must have shape [batch, state_dim]")
+    if inputs.ndim != 3 or inputs.shape[0] != initial_states.shape[0]:
+        raise ValueError("inputs must have shape [batch, steps, input_dim]")
+
+    state_mean = torch.as_tensor(normalization.state_mean, dtype=torch.float32, device=device)
+    state_std = torch.as_tensor(normalization.state_std, dtype=torch.float32, device=device)
+    input_mean = torch.as_tensor(normalization.input_mean, dtype=torch.float32, device=device)
+    input_std = torch.as_tensor(normalization.input_std, dtype=torch.float32, device=device)
+    inputs_tensor = torch.as_tensor(inputs, dtype=torch.float32, device=device)
+    inputs_normalized = (inputs_tensor - input_mean) / input_std
+    current = torch.as_tensor(initial_states, dtype=torch.float32, device=device)
+    prediction = torch.empty(
+        (len(initial_states), inputs.shape[1] + 1, len(STATE_NAMES)),
+        dtype=torch.float32,
+        device=device,
+    )
+    prediction[:, 0] = current
+    hidden = None
+    for index in range(inputs.shape[1]):
+        state_n = (current - state_mean) / state_std
+        features = torch.cat([state_n, inputs_normalized[:, index]], dim=-1).unsqueeze(1)
+        next_n, hidden = model(features, hidden=hidden, return_hidden=True)
+        next_state = next_n[:, 0] * state_std + state_mean
+        next_state[:, 1] = torch.clamp(next_state[:, 1], min=0.0)
+        next_state[:, 2:14] = torch.clamp(next_state[:, 2:14], 0.0, 1.0)
+        next_state[:, 14:17] = torch.clamp(next_state[:, 14:17], min=0.0)
+        prediction[:, index + 1] = next_state
+        current = next_state
+    return prediction.cpu().numpy()
+
+
+@torch.no_grad()
 def rollout_trajectory(
     model,
     initial_state: np.ndarray,
@@ -89,26 +135,15 @@ def rollout_trajectory(
     normalization: Normalization,
     device: str | torch.device = "cpu",
 ) -> np.ndarray:
-    """Autoregressively predict a complete state trajectory."""
+    """Autoregressively predict one complete state trajectory."""
 
-    device = torch.device(device)
-    model.eval()
-    prediction = np.empty((len(inputs) + 1, len(STATE_NAMES)), dtype=np.float32)
-    prediction[0] = initial_state
-    hidden = None
-    for index, input_row in enumerate(inputs):
-        state_n = (prediction[index] - normalization.state_mean) / normalization.state_std
-        input_n = (input_row - normalization.input_mean) / normalization.input_std
-        features = torch.from_numpy(
-            np.concatenate([state_n, input_n]).astype(np.float32)[None, None]
-        ).to(device)
-        next_n, hidden = model(features, hidden=hidden, return_hidden=True)
-        next_state = next_n[0, 0].cpu().numpy() * normalization.state_std + normalization.state_mean
-        next_state[1] = max(0.0, next_state[1])
-        next_state[2:14] = np.clip(next_state[2:14], 0.0, 1.0)
-        next_state[14:17] = np.maximum(next_state[14:17], 0.0)
-        prediction[index + 1] = next_state
-    return prediction
+    return rollout_batch(
+        model,
+        np.asarray(initial_state)[None],
+        np.asarray(inputs)[None],
+        normalization,
+        device,
+    )[0]
 
 
 def train_model(

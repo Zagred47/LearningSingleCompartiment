@@ -4,7 +4,7 @@ from hay_single_compartment import SimulationConfig, generate_dataset, validate_
 from hay_single_compartment.dataset import Normalization, SequenceWindowDataset
 
 
-def test_small_dataset_roundtrip(tmp_path):
+def test_small_dataset_roundtrip(tmp_path, capsys):
     path = tmp_path / "tiny.h5"
     config = SimulationConfig(
         duration_ms=5.0,
@@ -13,7 +13,8 @@ def test_small_dataset_roundtrip(tmp_path):
         validation_trajectories=1,
         test_trajectories=1,
     )
-    report = generate_dataset(path, config)
+    report = generate_dataset(path, config, progress=True)
+    assert "[dataset]" in capsys.readouterr().out
     assert report["valid"]
     assert validate_dataset(path)["valid"]
     assert path.with_suffix(".manifest.json").exists()

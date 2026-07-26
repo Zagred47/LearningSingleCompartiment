@@ -63,8 +63,8 @@ usare **Run all**. Il notebook:
 
 Per spingere la ConvLSTM, usare invece
 `notebooks/kaggle_convlstm_scaling.ipynb`: genera 32 traiettorie più lunghe e
-confronta Base, Large e XL (circa 1--4 milioni di parametri) con AMP, cosine
-schedule, early stopping e selezione basata soltanto sulla validation.
+addestra soltanto ConvLSTM Large (2,2 milioni di parametri) con AMP, cosine
+schedule, early stopping e progress/ETA per generazione, training e rollout.
 
 Per usare direttamente GitHub in Kaggle, clonare prima la repo nella directory
 `/kaggle/working` e aprire/eseguire il notebook dalla root del checkout.

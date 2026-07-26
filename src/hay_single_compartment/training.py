@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import time
 from pathlib import Path
 from typing import Dict, Sequence
 
@@ -88,6 +89,7 @@ def rollout_batch(
     inputs: np.ndarray,
     normalization: Normalization,
     device: str | torch.device = "cpu",
+    progress: bool = False,
 ) -> np.ndarray:
     """Autoregressively predict multiple trajectories in one batched rollout."""
 
@@ -114,6 +116,8 @@ def rollout_batch(
     )
     prediction[:, 0] = current
     hidden = None
+    started_at = time.perf_counter()
+    progress_interval = max(1, inputs.shape[1] // 20)
     for index in range(inputs.shape[1]):
         state_n = (current - state_mean) / state_std
         features = torch.cat([state_n, inputs_normalized[:, index]], dim=-1).unsqueeze(1)
@@ -124,6 +128,17 @@ def rollout_batch(
         next_state[:, 14:17] = torch.clamp(next_state[:, 14:17], min=0.0)
         prediction[:, index + 1] = next_state
         current = next_state
+        completed = index + 1
+        if progress and (completed % progress_interval == 0 or completed == inputs.shape[1]):
+            elapsed = time.perf_counter() - started_at
+            rate = completed / max(elapsed, 1e-9)
+            eta = (inputs.shape[1] - completed) / max(rate, 1e-9)
+            percentage = 100.0 * completed / inputs.shape[1]
+            print(
+                f"[rollout] {completed:>5}/{inputs.shape[1]} steps ({percentage:5.1f}%) "
+                f"| elapsed {elapsed:6.1f}s | ETA {eta:6.1f}s",
+                flush=True,
+            )
     return prediction.cpu().numpy()
 
 
@@ -166,6 +181,7 @@ def train_model(
     patience: int | None = None,
     minimum_epochs: int = 1,
     use_amp: bool = True,
+    verbose: bool = False,
 ) -> Dict[str, object]:
     """Train one architecture with validation checkpointing."""
 
@@ -200,7 +216,9 @@ def train_model(
     best_state = None
     history = []
     stale_epochs = 0
+    training_started_at = time.perf_counter()
     for epoch in range(1, epochs + 1):
+        epoch_started_at = time.perf_counter()
         model.train()
         train_losses = []
         for features, target in train_loader:
@@ -234,7 +252,26 @@ def train_model(
         else:
             stale_epochs += 1
         scheduler.step()
+        if verbose:
+            elapsed = time.perf_counter() - training_started_at
+            epoch_seconds = time.perf_counter() - epoch_started_at
+            eta = (epochs - epoch) * elapsed / epoch
+            marker = " *" if validation_loss == best_loss else ""
+            print(
+                f"[training] epoch {epoch:>3}/{epochs} ({100.0 * epoch / epochs:5.1f}%) "
+                f"| train {history[-1]['train_loss']:.6g} "
+                f"| val {validation_loss:.6g}{marker} "
+                f"| lr {history[-1]['learning_rate']:.2e} "
+                f"| epoch {epoch_seconds:5.1f}s | ETA {eta:6.1f}s",
+                flush=True,
+            )
         if patience is not None and epoch >= minimum_epochs and stale_epochs >= patience:
+            if verbose:
+                print(
+                    f"[training] early stopping after {epoch} epochs; "
+                    f"best validation loss {best_loss:.6g}",
+                    flush=True,
+                )
             break
     if best_state is None:
         raise RuntimeError("training produced no checkpoint")

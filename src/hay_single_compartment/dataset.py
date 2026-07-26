@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Mapping, Sequence
@@ -55,6 +56,8 @@ def _run_with_warmup(
 def generate_dataset(
     output_path: str | Path,
     config: SimulationConfig | None = None,
+    *,
+    progress: bool = False,
 ) -> Dict[str, object]:
     """Generate all splits into one portable, compressed HDF5 artifact."""
 
@@ -70,6 +73,24 @@ def generate_dataset(
         "test": config.test_trajectories,
     }
     steps = int(round(config.duration_ms / config.dt_ms))
+    total_trajectories = sum(split_counts.values())
+    completed_trajectories = 0
+    started_at = time.perf_counter()
+
+    def show_progress(split: str, index: int) -> None:
+        if not progress:
+            return
+        elapsed = time.perf_counter() - started_at
+        rate = completed_trajectories / max(elapsed, 1e-9)
+        remaining = total_trajectories - completed_trajectories
+        eta = remaining / max(rate, 1e-9)
+        percentage = 100.0 * completed_trajectories / total_trajectories
+        print(
+            f"[dataset] {completed_trajectories:>3}/{total_trajectories} "
+            f"({percentage:5.1f}%) | {split} trajectory {index + 1}/{split_counts[split]} "
+            f"| elapsed {elapsed:6.1f}s | ETA {eta:6.1f}s",
+            flush=True,
+        )
 
     with h5py.File(output_path, "w") as handle:
         handle.attrs["schema_version"] = SCHEMA_VERSION
@@ -83,15 +104,16 @@ def generate_dataset(
 
         for split, count in split_counts.items():
             group = handle.create_group(split)
-            arrays = [
-                _run_with_warmup(
+            arrays = []
+            for index in range(count):
+                arrays.append(_run_with_warmup(
                     simulator,
                     drive_generator,
                     config,
                     config.seed + SPLIT_OFFSETS[split] + index,
-                )
-                for index in range(count)
-            ]
+                ))
+                completed_trajectories += 1
+                show_progress(split, index)
             group.create_dataset(
                 "states", data=np.stack([x["states"] for x in arrays]).astype("f4"),
                 compression="gzip", shuffle=True,

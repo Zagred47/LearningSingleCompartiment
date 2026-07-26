@@ -48,7 +48,7 @@ def test_conv_lstm_stepwise_matches_causal_full_sequence():
     torch.testing.assert_close(torch.cat(stepwise, dim=1), full, atol=1e-5, rtol=1e-5)
 
 
-def test_batched_rollout_matches_individual_rollouts():
+def test_batched_rollout_matches_individual_rollouts(capsys):
     torch.manual_seed(8)
     model = build_model("conv_lstm", 21, 17, hidden_dim=8, layers=1)
     normalization = Normalization(
@@ -57,7 +57,8 @@ def test_batched_rollout_matches_individual_rollouts():
     )
     initial = np.zeros((2, 17), dtype=np.float32)
     inputs = np.random.default_rng(8).normal(size=(2, 6, 4)).astype(np.float32)
-    batched = rollout_batch(model, initial, inputs, normalization)
+    batched = rollout_batch(model, initial, inputs, normalization, progress=True)
+    assert "[rollout]" in capsys.readouterr().out
     individual = np.stack([
         rollout_trajectory(model, initial[index], inputs[index], normalization)
         for index in range(2)

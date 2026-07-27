@@ -66,6 +66,13 @@ Per spingere la ConvLSTM, usare invece
 addestra soltanto ConvLSTM Large (2,2 milioni di parametri) con AMP, cosine
 schedule, early stopping e progress/ETA per generazione, training e rollout.
 
+Il primo esperimento di bias induttivo ontologico è in
+`notebooks/kaggle_ontology_experiment_01.ipynb`. Confronta, a budget di
+parametri quasi uguale, una GRU globale e un mosaico composto esclusivamente
+da GRU standard. Nel mosaico ciascuna GRU vede soltanto le dipendenze causali
+del proprio sottosistema. Il notebook misura anche l'efficienza dei dati al
+25%, 50% e 100%, gli errori per entità e i rollout fino a 500 ms.
+
 Per usare direttamente GitHub in Kaggle, clonare prima la repo nella directory
 `/kaggle/working` e aprire/eseguire il notebook dalla root del checkout.
 

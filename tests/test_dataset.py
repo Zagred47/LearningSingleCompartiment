@@ -33,3 +33,15 @@ def test_small_dataset_roundtrip(tmp_path, capsys):
     features, target = windows[0]
     assert features.shape == (10, 21)
     assert target.shape == (10, 17)
+
+    half = SequenceWindowDataset(
+        path,
+        "train",
+        normalization,
+        sequence_length=10,
+        stride=10,
+        trajectory_fraction=0.5,
+        selection_seed=9,
+    )
+    assert len(half.selected_trajectories) == 1
+    assert len(half) * 2 == len(windows)

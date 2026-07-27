@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 
 from .dataset import Normalization, SequenceWindowDataset
 from .models import build_model
+from .ontology import ONTOLOGY_GROUPS
 from .simulator import INPUT_NAMES, STATE_NAMES
 
 
@@ -79,6 +80,10 @@ def one_step_metrics(
         "mean_normalized_rmse": float(np.mean(rmse / normalization.state_std)),
         "persistence_voltage_rmse_mv": float(persistence_rmse[0]),
         "per_state_rmse": {name: float(value) for name, value in zip(STATE_NAMES, rmse)},
+        "per_group_normalized_rmse": {
+            group.name: float(np.mean(rmse[list(group.output_indices)] / normalization.state_std[list(group.output_indices)]))
+            for group in ONTOLOGY_GROUPS
+        },
     }
 
 
@@ -182,13 +187,22 @@ def train_model(
     minimum_epochs: int = 1,
     use_amp: bool = True,
     verbose: bool = False,
+    train_fraction: float = 1.0,
 ) -> Dict[str, object]:
     """Train one architecture with validation checkpointing."""
 
     seed_everything(seed)
     device_obj = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     normalization = Normalization.from_h5(dataset_path)
-    train_data = SequenceWindowDataset(dataset_path, "train", normalization, sequence_length, stride)
+    train_data = SequenceWindowDataset(
+        dataset_path,
+        "train",
+        normalization,
+        sequence_length,
+        stride,
+        trajectory_fraction=train_fraction,
+        selection_seed=seed,
+    )
     validation_data = SequenceWindowDataset(dataset_path, "validation", normalization, sequence_length, stride)
     generator = torch.Generator().manual_seed(seed)
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, generator=generator)
@@ -303,6 +317,9 @@ def train_model(
         "run_name": artifact_name,
         "device": str(device_obj),
         "amp": amp_enabled,
+        "train_fraction": train_fraction,
+        "train_trajectories": len(train_data.selected_trajectories),
+        "train_windows": len(train_data),
         "parameters": int(sum(parameter.numel() for parameter in model.parameters())),
         "epochs_trained": len(history),
         "best_validation_loss": best_loss,

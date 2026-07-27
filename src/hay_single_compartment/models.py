@@ -6,6 +6,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .ontology import ONTOLOGY_GROUPS
+
 
 class CausalConv1d(nn.Conv1d):
     """One-dimensional convolution that never reads future time steps."""
@@ -152,10 +154,77 @@ class ConvLSTMSurrogate(nn.Module):
         return prediction, next_hidden
 
 
+class OntologyGRUMosaic(nn.Module):
+    """Causally factorized flow map built only from standard GRU layers.
+
+    Every ontology group owns an independent ``torch.nn.GRU`` and residual
+    output head.  The novelty tested here is only sparse causal factorization;
+    the recurrent primitive itself is unchanged and well established.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        state_dim: int,
+        hidden_dim: int = 48,
+        layers: int = 2,
+        dropout: float = 0.1,
+        **_: object,
+    ) -> None:
+        super().__init__()
+        expected_input = max(index for group in ONTOLOGY_GROUPS for index in group.feature_indices) + 1
+        expected_state = max(index for group in ONTOLOGY_GROUPS for index in group.output_indices) + 1
+        if input_dim != expected_input or state_dim != expected_state:
+            raise ValueError(
+                f"ontology_gru requires input_dim={expected_input} and state_dim={expected_state}"
+            )
+        self.state_dim = state_dim
+        self.architecture = "ontology_gru"
+        self.groups = ONTOLOGY_GROUPS
+        self.encoders = nn.ModuleDict()
+        self.recurrents = nn.ModuleDict()
+        self.heads = nn.ModuleDict()
+        for group in self.groups:
+            self.encoders[group.name] = nn.Sequential(
+                nn.Linear(len(group.feature_indices), hidden_dim), nn.SiLU()
+            )
+            self.recurrents[group.name] = nn.GRU(
+                hidden_dim,
+                hidden_dim,
+                num_layers=layers,
+                batch_first=True,
+                dropout=dropout if layers > 1 else 0.0,
+            )
+            self.heads[group.name] = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.SiLU(),
+                nn.Linear(hidden_dim, len(group.output_indices)),
+            )
+
+    def forward(self, features, hidden=None, return_hidden: bool = False):
+        hidden = hidden if isinstance(hidden, dict) else {}
+        next_hidden = {}
+        prediction = features[..., : self.state_dim].clone()
+        for group in self.groups:
+            local_features = features[..., list(group.feature_indices)]
+            encoded = self.encoders[group.name](local_features)
+            memory, group_hidden = self.recurrents[group.name](
+                encoded, hidden.get(group.name)
+            )
+            output_indices = list(group.output_indices)
+            prediction[..., output_indices] = (
+                features[..., output_indices] + self.heads[group.name](memory)
+            )
+            next_hidden[group.name] = group_hidden
+        return (prediction, next_hidden) if return_hidden else prediction
+
+
 def build_model(architecture: str, input_dim: int, state_dim: int, **kwargs):
     architecture = architecture.lower()
     if architecture == "mlp":
         return MLPSurrogate(input_dim, state_dim, **kwargs)
     if architecture in {"conv_lstm", "convlstm", "cnn_lstm"}:
         return ConvLSTMSurrogate(input_dim, state_dim, **kwargs)
+    if architecture in {"ontology_gru", "causal_gru", "gru_mosaic"}:
+        return OntologyGRUMosaic(input_dim, state_dim, **kwargs)
     return RecurrentSurrogate(input_dim, state_dim, architecture=architecture, **kwargs)

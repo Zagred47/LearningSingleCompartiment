@@ -240,6 +240,8 @@ class SequenceWindowDataset:
         normalization: Normalization,
         sequence_length: int = 64,
         stride: int = 16,
+        trajectory_fraction: float = 1.0,
+        selection_seed: int = 2026,
     ) -> None:
         import torch
 
@@ -249,11 +251,17 @@ class SequenceWindowDataset:
             self.inputs = handle[f"{split}/inputs"][...]
         if sequence_length < 1 or sequence_length > self.inputs.shape[1]:
             raise ValueError("invalid sequence length")
+        if not 0.0 < trajectory_fraction <= 1.0:
+            raise ValueError("trajectory_fraction must be in (0, 1]")
         self.normalization = normalization
         self.sequence_length = sequence_length
+        trajectory_count = max(1, int(np.ceil(self.inputs.shape[0] * trajectory_fraction)))
+        rng = np.random.default_rng(selection_seed)
+        selected = sorted(rng.permutation(self.inputs.shape[0])[:trajectory_count].tolist())
+        self.selected_trajectories = tuple(selected)
         self.indices = [
             (trajectory, start)
-            for trajectory in range(self.inputs.shape[0])
+            for trajectory in selected
             for start in range(0, self.inputs.shape[1] - sequence_length + 1, stride)
         ]
 

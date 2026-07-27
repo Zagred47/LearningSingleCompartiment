@@ -9,7 +9,11 @@ from hay_single_compartment.ontology import ONTOLOGY_GROUPS
 
 
 @pytest.mark.parametrize(
-    "architecture", ["mlp", "rnn", "gru", "lstm", "conv_lstm", "ontology_gru"]
+    "architecture",
+    [
+        "mlp", "rnn", "gru", "lstm", "conv_lstm", "ontology_gru",
+        "conv_lstm_receptor_gru",
+    ],
 )
 def test_model_shape_and_gradient(architecture):
     model = build_model(architecture, input_dim=21, state_dim=17, hidden_dim=16, layers=1)
@@ -72,6 +76,43 @@ def test_ontology_gru_stepwise_matches_full_sequence():
         )
         stepwise.append(prediction)
     torch.testing.assert_close(torch.cat(stepwise, dim=1), full, atol=1e-5, rtol=1e-5)
+
+
+def test_receptor_composite_stepwise_matches_full_sequence():
+    torch.manual_seed(6)
+    model = build_model(
+        "conv_lstm_receptor_gru",
+        input_dim=21,
+        state_dim=17,
+        hidden_dim=8,
+        layers=1,
+        receptor_hidden_dim=5,
+    )
+    model.eval()
+    features = torch.randn(2, 9, 21)
+    full = model(features)
+    hidden = None
+    stepwise = []
+    for step in range(features.shape[1]):
+        prediction, hidden = model(
+            features[:, step : step + 1], hidden=hidden, return_hidden=True
+        )
+        stepwise.append(prediction)
+    torch.testing.assert_close(torch.cat(stepwise, dim=1), full, atol=1e-5, rtol=1e-5)
+
+
+def test_receptor_composite_has_near_matched_capacity_control():
+    composite = build_model(
+        "conv_lstm_receptor_gru", 21, 17, hidden_dim=128, layers=3,
+        width_multiplier=2, receptor_hidden_dim=32,
+    )
+    control = build_model(
+        "conv_lstm", 21, 17, hidden_dim=128, layers=3,
+        width_multiplier=2, head_dim=336,
+    )
+    composite_parameters = sum(parameter.numel() for parameter in composite.parameters())
+    control_parameters = sum(parameter.numel() for parameter in control.parameters())
+    assert abs(composite_parameters - control_parameters) / composite_parameters < 0.002
 
 
 def test_batched_rollout_matches_individual_rollouts(capsys):

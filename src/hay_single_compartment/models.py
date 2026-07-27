@@ -93,6 +93,7 @@ class ConvLSTMSurrogate(nn.Module):
         layers: int = 2,
         dropout: float = 0.1,
         width_multiplier: int = 2,
+        head_dim: int | None = None,
         **_: object,
     ) -> None:
         super().__init__()
@@ -115,8 +116,9 @@ class ConvLSTMSurrogate(nn.Module):
             batch_first=True,
             dropout=dropout if layers > 1 else 0.0,
         )
+        head_width = head_dim or width
         self.head = nn.Sequential(
-            nn.Linear(width, width), nn.SiLU(), nn.Linear(width, state_dim)
+            nn.Linear(width, head_width), nn.SiLU(), nn.Linear(head_width, state_dim)
         )
 
     @staticmethod
@@ -152,6 +154,96 @@ class ConvLSTMSurrogate(nn.Module):
             "conv_history": conv_features[:, -self.context_steps :].detach(),
         }
         return prediction, next_hidden
+
+
+class ConvLSTMReceptorGRUSurrogate(ConvLSTMSurrogate):
+    """ConvLSTM backbone with standard GRU experts for synaptic states.
+
+    The known global backbone still predicts voltage, calcium, and all channel
+    gates.  Only the three receptor conductances are delegated to independent
+    GRUs that read their own conductance and matching event count.
+    """
+
+    receptor_specs = {
+        "ampa": (14, 18),
+        "nmda": (15, 19),
+        "gabaa": (16, 20),
+    }
+
+    def __init__(
+        self,
+        input_dim: int,
+        state_dim: int,
+        hidden_dim: int = 128,
+        layers: int = 2,
+        dropout: float = 0.1,
+        width_multiplier: int = 2,
+        receptor_hidden_dim: int = 32,
+        receptor_layers: int = 1,
+        **kwargs: object,
+    ) -> None:
+        if state_dim != 17 or input_dim != 21:
+            raise ValueError("conv_lstm_receptor_gru requires the 17-state, 4-input schema")
+        super().__init__(
+            input_dim=input_dim,
+            state_dim=state_dim,
+            hidden_dim=hidden_dim,
+            layers=layers,
+            dropout=dropout,
+            width_multiplier=width_multiplier,
+            **kwargs,
+        )
+        width = hidden_dim * width_multiplier
+        self.architecture = "conv_lstm_receptor_gru"
+        # The shared backbone owns only V, calcium, and the 12 channel gates.
+        self.head = nn.Sequential(
+            nn.Linear(width, width), nn.SiLU(), nn.Linear(width, 14)
+        )
+        self.receptor_encoders = nn.ModuleDict()
+        self.receptor_recurrents = nn.ModuleDict()
+        self.receptor_heads = nn.ModuleDict()
+        for name in self.receptor_specs:
+            self.receptor_encoders[name] = nn.Sequential(
+                nn.Linear(2, receptor_hidden_dim), nn.SiLU()
+            )
+            self.receptor_recurrents[name] = nn.GRU(
+                receptor_hidden_dim,
+                receptor_hidden_dim,
+                num_layers=receptor_layers,
+                batch_first=True,
+                dropout=dropout if receptor_layers > 1 else 0.0,
+            )
+            self.receptor_heads[name] = nn.Sequential(
+                nn.Linear(receptor_hidden_dim, receptor_hidden_dim),
+                nn.SiLU(),
+                nn.Linear(receptor_hidden_dim, 1),
+            )
+
+    def forward(self, features, hidden=None, return_hidden: bool = False):
+        hidden = hidden if isinstance(hidden, dict) else {}
+        history = hidden.get("conv_history")
+        conv_features = torch.cat([history, features], dim=1) if history is not None else features
+        encoded = self._encode(conv_features)[:, -features.shape[1] :]
+        memory, recurrent_hidden = self.recurrent(encoded, hidden.get("recurrent"))
+
+        prediction = features[..., : self.state_dim].clone()
+        prediction[..., :14] = features[..., :14] + self.head(memory)
+        next_hidden = {
+            "recurrent": recurrent_hidden,
+            "conv_history": conv_features[:, -self.context_steps :].detach(),
+        }
+        for name, (state_index, event_index) in self.receptor_specs.items():
+            local_features = features[..., [state_index, event_index]]
+            local_encoded = self.receptor_encoders[name](local_features)
+            local_memory, local_hidden = self.receptor_recurrents[name](
+                local_encoded, hidden.get(f"receptor_{name}")
+            )
+            prediction[..., state_index] = (
+                features[..., state_index]
+                + self.receptor_heads[name](local_memory).squeeze(-1)
+            )
+            next_hidden[f"receptor_{name}"] = local_hidden
+        return (prediction, next_hidden) if return_hidden else prediction
 
 
 class OntologyGRUMosaic(nn.Module):
@@ -225,6 +317,12 @@ def build_model(architecture: str, input_dim: int, state_dim: int, **kwargs):
         return MLPSurrogate(input_dim, state_dim, **kwargs)
     if architecture in {"conv_lstm", "convlstm", "cnn_lstm"}:
         return ConvLSTMSurrogate(input_dim, state_dim, **kwargs)
+    if architecture in {
+        "conv_lstm_receptor_gru",
+        "convlstm_receptor_gru",
+        "conv_receptor_gru",
+    }:
+        return ConvLSTMReceptorGRUSurrogate(input_dim, state_dim, **kwargs)
     if architecture in {"ontology_gru", "causal_gru", "gru_mosaic"}:
         return OntologyGRUMosaic(input_dim, state_dim, **kwargs)
     return RecurrentSurrogate(input_dim, state_dim, architecture=architecture, **kwargs)

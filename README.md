@@ -73,6 +73,13 @@ da GRU standard. Nel mosaico ciascuna GRU vede soltanto le dipendenze causali
 del proprio sottosistema. Il notebook misura anche l'efficienza dei dati al
 25%, 50% e 100%, gli errori per entità e i rollout fino a 500 ms.
 
+La progressione compositiva che conserva il backbone vincente parte da
+`notebooks/kaggle_composite_experiment_02.ipynb`. Confronta ConvLSTM Large,
+una ConvLSTM monolitica con capacità aggiuntiva e ConvLSTM Large con tre GRU
+locali standard dedicate esclusivamente agli stati AMPA, NMDA e GABA. Il
+confronto stabilisce se la separabilità dei recettori aggiunge informazione
+strutturale oltre al semplice aumento dei parametri.
+
 Per usare direttamente GitHub in Kaggle, clonare prima la repo nella directory
 `/kaggle/working` e aprire/eseguire il notebook dalla root del checkout.
 

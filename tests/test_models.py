@@ -184,6 +184,45 @@ def test_hcn_auxiliary_has_near_matched_capacity_control():
     assert abs(candidate_parameters - control_parameters) / candidate_parameters < 0.001
 
 
+def test_hcn_mlp_auxiliary_is_stepwise_and_trains_all_parameters():
+    torch.manual_seed(10)
+    model = build_model(
+        "conv_lstm_receptor_hcn_mlp_aux", 21, 17, hidden_dim=8, layers=1,
+        receptor_hidden_dim=5, hcn_mlp_hidden_dim=9, auxiliary_hidden_dim=7,
+    )
+    model.eval()
+    features = torch.randn(2, 8, 21)
+    full, auxiliary = model.forward_with_auxiliary(features)
+    hidden = None
+    stepwise = []
+    for step in range(features.shape[1]):
+        prediction, hidden = model(
+            features[:, step : step + 1], hidden=hidden, return_hidden=True
+        )
+        stepwise.append(prediction)
+    torch.testing.assert_close(torch.cat(stepwise, dim=1), full, atol=1e-5, rtol=1e-5)
+    (full.square().mean() + auxiliary.square().mean()).backward()
+    assert all(parameter.grad is not None for parameter in model.parameters())
+
+
+def test_hcn_mlp_and_gru_auxiliary_have_matched_capacity():
+    common = dict(
+        hidden_dim=128, layers=3, width_multiplier=2,
+        receptor_hidden_dim=32, auxiliary_hidden_dim=32,
+    )
+    gru = build_model(
+        "conv_lstm_receptor_hcn_aux", 21, 17,
+        hcn_hidden_dim=32, **common,
+    )
+    mlp = build_model(
+        "conv_lstm_receptor_hcn_mlp_aux", 21, 17,
+        hcn_mlp_hidden_dim=82, **common,
+    )
+    gru_parameters = sum(parameter.numel() for parameter in gru.parameters())
+    mlp_parameters = sum(parameter.numel() for parameter in mlp.parameters())
+    assert abs(gru_parameters - mlp_parameters) / gru_parameters < 0.001
+
+
 def test_batched_rollout_matches_individual_rollouts(capsys):
     torch.manual_seed(8)
     model = build_model("conv_lstm", 21, 17, hidden_dim=8, layers=1)

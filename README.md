@@ -93,6 +93,11 @@ condivisa. Mantiene l'output locale e aggiunge al backbone una testa ausiliaria
 standard, usata solo durante il training, confrontandola con un controllo di
 capacità quasi identico.
 
+`notebooks/kaggle_composite_experiment_03c_markov_mlp.ipynb` verifica poi se
+l'instabilità della coordinata 8 dipende dallo stato nascosto della GRU
+privata. A parità di backbone, auxiliary head e capacità, sostituisce soltanto
+la GRU locale con una MLP residuale standard priva di memoria autonoma.
+
 Per usare direttamente GitHub in Kaggle, clonare prima la repo nella directory
 `/kaggle/working` e aprire/eseguire il notebook dalla root del checkout.
 

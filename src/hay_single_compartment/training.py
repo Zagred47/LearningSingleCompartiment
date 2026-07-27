@@ -186,6 +186,7 @@ def train_model(
     hcn_layers: int = 1,
     auxiliary_hidden_dim: int = 32,
     auxiliary_weight: float | None = None,
+    hcn_mlp_hidden_dim: int = 82,
     dropout: float = 0.1,
     learning_rate: float = 1e-3,
     seed: int = 2026,
@@ -230,6 +231,7 @@ def train_model(
         hcn_hidden_dim=hcn_hidden_dim,
         hcn_layers=hcn_layers,
         auxiliary_hidden_dim=auxiliary_hidden_dim,
+        hcn_mlp_hidden_dim=hcn_mlp_hidden_dim,
         dropout=dropout,
     ).to(device_obj)
     resolved_auxiliary_weight = (
@@ -334,6 +336,7 @@ def train_model(
                 "hcn_hidden_dim": hcn_hidden_dim,
                 "hcn_layers": hcn_layers,
                 "auxiliary_hidden_dim": auxiliary_hidden_dim,
+                "hcn_mlp_hidden_dim": hcn_mlp_hidden_dim,
                 "dropout": dropout,
             },
             "normalization": normalization.to_dict(),

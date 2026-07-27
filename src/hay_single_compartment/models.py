@@ -430,6 +430,97 @@ class ConvLSTMReceptorHCNAuxSurrogate(ConvLSTMReceptorHCNGRUSurrogate):
         return prediction, auxiliary_prediction
 
 
+class ConvLSTMReceptorHCNMLPAuxSurrogate(ConvLSTMReceptorGRUSurrogate):
+    """Markovian local coordinate-8 MLP plus global auxiliary supervision."""
+
+    global_state_indices = tuple(index for index in range(14) if index != 8)
+    hcn_feature_indices = (0, 8, 17, 18, 19, 20)
+
+    def __init__(
+        self,
+        input_dim: int,
+        state_dim: int,
+        hidden_dim: int = 128,
+        layers: int = 2,
+        dropout: float = 0.1,
+        width_multiplier: int = 2,
+        hcn_mlp_hidden_dim: int = 82,
+        auxiliary_hidden_dim: int = 32,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(
+            input_dim=input_dim,
+            state_dim=state_dim,
+            hidden_dim=hidden_dim,
+            layers=layers,
+            dropout=dropout,
+            width_multiplier=width_multiplier,
+            **kwargs,
+        )
+        width = hidden_dim * width_multiplier
+        self.architecture = "conv_lstm_receptor_hcn_mlp_aux"
+        self.head = nn.Sequential(
+            nn.Linear(width, width), nn.SiLU(), nn.Linear(width, 13)
+        )
+        self.hcn_mlp = nn.Sequential(
+            nn.Linear(len(self.hcn_feature_indices), hcn_mlp_hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hcn_mlp_hidden_dim, hcn_mlp_hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hcn_mlp_hidden_dim, 1),
+        )
+        self.auxiliary_head = nn.Sequential(
+            nn.Linear(width, auxiliary_hidden_dim),
+            nn.SiLU(),
+            nn.Linear(auxiliary_hidden_dim, 1),
+        )
+
+    def _forward_all(self, features, hidden=None):
+        hidden = hidden if isinstance(hidden, dict) else {}
+        history = hidden.get("conv_history")
+        conv_features = (
+            torch.cat([history, features], dim=1) if history is not None else features
+        )
+        encoded = self._encode(conv_features)[:, -features.shape[1] :]
+        memory, recurrent_hidden = self.recurrent(encoded, hidden.get("recurrent"))
+
+        prediction = features[..., : self.state_dim].clone()
+        global_indices = list(self.global_state_indices)
+        prediction[..., global_indices] = (
+            features[..., global_indices] + self.head(memory)
+        )
+        next_hidden = {
+            "recurrent": recurrent_hidden,
+            "conv_history": conv_features[:, -self.context_steps :].detach(),
+        }
+        for name, (state_index, event_index) in self.receptor_specs.items():
+            local_features = features[..., [state_index, event_index]]
+            local_encoded = self.receptor_encoders[name](local_features)
+            local_memory, local_hidden = self.receptor_recurrents[name](
+                local_encoded, hidden.get(f"receptor_{name}")
+            )
+            prediction[..., state_index] = (
+                features[..., state_index]
+                + self.receptor_heads[name](local_memory).squeeze(-1)
+            )
+            next_hidden[f"receptor_{name}"] = local_hidden
+
+        hcn_features = features[..., list(self.hcn_feature_indices)]
+        prediction[..., 8] = (
+            features[..., 8] + self.hcn_mlp(hcn_features).squeeze(-1)
+        )
+        auxiliary_prediction = features[..., 8] + self.auxiliary_head(memory).squeeze(-1)
+        return prediction, next_hidden, auxiliary_prediction
+
+    def forward(self, features, hidden=None, return_hidden: bool = False):
+        prediction, next_hidden, _ = self._forward_all(features, hidden)
+        return (prediction, next_hidden) if return_hidden else prediction
+
+    def forward_with_auxiliary(self, features):
+        prediction, _, auxiliary_prediction = self._forward_all(features)
+        return prediction, auxiliary_prediction
+
+
 class OntologyGRUMosaic(nn.Module):
     """Causally factorized flow map built only from standard GRU layers.
 
@@ -519,6 +610,12 @@ def build_model(architecture: str, input_dim: int, state_dim: int, **kwargs):
         "conv_receptor_hcn_aux",
     }:
         return ConvLSTMReceptorHCNAuxSurrogate(input_dim, state_dim, **kwargs)
+    if architecture in {
+        "conv_lstm_receptor_hcn_mlp_aux",
+        "convlstm_receptor_hcn_mlp_aux",
+        "conv_receptor_hcn_mlp_aux",
+    }:
+        return ConvLSTMReceptorHCNMLPAuxSurrogate(input_dim, state_dim, **kwargs)
     if architecture in {"ontology_gru", "causal_gru", "gru_mosaic"}:
         return OntologyGRUMosaic(input_dim, state_dim, **kwargs)
     return RecurrentSurrogate(input_dim, state_dim, architecture=architecture, **kwargs)

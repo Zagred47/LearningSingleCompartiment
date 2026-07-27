@@ -13,6 +13,7 @@ from hay_single_compartment.ontology import ONTOLOGY_GROUPS
     [
         "mlp", "rnn", "gru", "lstm", "conv_lstm", "ontology_gru",
         "conv_lstm_receptor_gru",
+        "conv_lstm_receptor_hcn_gru",
     ],
 )
 def test_model_shape_and_gradient(architecture):
@@ -113,6 +114,44 @@ def test_receptor_composite_has_near_matched_capacity_control():
     composite_parameters = sum(parameter.numel() for parameter in composite.parameters())
     control_parameters = sum(parameter.numel() for parameter in control.parameters())
     assert abs(composite_parameters - control_parameters) / composite_parameters < 0.002
+
+
+def test_hcn_composite_stepwise_matches_full_sequence():
+    torch.manual_seed(7)
+    model = build_model(
+        "conv_lstm_receptor_hcn_gru",
+        21,
+        17,
+        hidden_dim=8,
+        layers=1,
+        receptor_hidden_dim=5,
+        hcn_hidden_dim=6,
+    )
+    model.eval()
+    features = torch.randn(2, 9, 21)
+    full = model(features)
+    hidden = None
+    stepwise = []
+    for step in range(features.shape[1]):
+        prediction, hidden = model(
+            features[:, step : step + 1], hidden=hidden, return_hidden=True
+        )
+        stepwise.append(prediction)
+    torch.testing.assert_close(torch.cat(stepwise, dim=1), full, atol=1e-5, rtol=1e-5)
+
+
+def test_hcn_composite_has_near_matched_composite_control():
+    hcn_composite = build_model(
+        "conv_lstm_receptor_hcn_gru", 21, 17, hidden_dim=128, layers=3,
+        width_multiplier=2, receptor_hidden_dim=32, hcn_hidden_dim=32,
+    )
+    control = build_model(
+        "conv_lstm_receptor_gru", 21, 17, hidden_dim=128, layers=3,
+        width_multiplier=2, receptor_hidden_dim=32, global_head_dim=283,
+    )
+    candidate_parameters = sum(parameter.numel() for parameter in hcn_composite.parameters())
+    control_parameters = sum(parameter.numel() for parameter in control.parameters())
+    assert abs(candidate_parameters - control_parameters) / candidate_parameters < 0.001
 
 
 def test_batched_rollout_matches_individual_rollouts(capsys):

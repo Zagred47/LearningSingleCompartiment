@@ -80,6 +80,12 @@ locali standard dedicate esclusivamente agli stati AMPA, NMDA e GABA. Il
 confronto stabilisce se la separabilità dei recettori aggiunge informazione
 strutturale oltre al semplice aumento dei parametri.
 
+Il passo successivo è `notebooks/kaggle_composite_experiment_03_hcn.ipynb`:
+mantiene il composito vincente con le tre GRU recettoriali e verifica, senza
+cambiare altro, se la coordinata di stato 8 può essere assegnata a una quarta
+GRU locale. Il controllo parte dallo stesso composito e aggiunge una quantità
+quasi identica di parametri alla testa globale.
+
 Per usare direttamente GitHub in Kaggle, clonare prima la repo nella directory
 `/kaggle/working` e aprire/eseguire il notebook dalla root del checkout.
 

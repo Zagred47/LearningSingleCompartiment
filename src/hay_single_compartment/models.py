@@ -180,6 +180,7 @@ class ConvLSTMReceptorGRUSurrogate(ConvLSTMSurrogate):
         width_multiplier: int = 2,
         receptor_hidden_dim: int = 32,
         receptor_layers: int = 1,
+        global_head_dim: int | None = None,
         **kwargs: object,
     ) -> None:
         if state_dim != 17 or input_dim != 21:
@@ -194,10 +195,13 @@ class ConvLSTMReceptorGRUSurrogate(ConvLSTMSurrogate):
             **kwargs,
         )
         width = hidden_dim * width_multiplier
+        global_head_width = global_head_dim or width
         self.architecture = "conv_lstm_receptor_gru"
         # The shared backbone owns only V, calcium, and the 12 channel gates.
         self.head = nn.Sequential(
-            nn.Linear(width, width), nn.SiLU(), nn.Linear(width, 14)
+            nn.Linear(width, global_head_width),
+            nn.SiLU(),
+            nn.Linear(global_head_width, 14),
         )
         self.receptor_encoders = nn.ModuleDict()
         self.receptor_recurrents = nn.ModuleDict()
@@ -243,6 +247,100 @@ class ConvLSTMReceptorGRUSurrogate(ConvLSTMSurrogate):
                 + self.receptor_heads[name](local_memory).squeeze(-1)
             )
             next_hidden[f"receptor_{name}"] = local_hidden
+        return (prediction, next_hidden) if return_hidden else prediction
+
+
+class ConvLSTMReceptorHCNGRUSurrogate(ConvLSTMReceptorGRUSurrogate):
+    """Previous winning composite plus one local GRU for state coordinate 8."""
+
+    global_state_indices = tuple(index for index in range(14) if index != 8)
+    hcn_feature_indices = (0, 8, 17, 18, 19, 20)
+
+    def __init__(
+        self,
+        input_dim: int,
+        state_dim: int,
+        hidden_dim: int = 128,
+        layers: int = 2,
+        dropout: float = 0.1,
+        width_multiplier: int = 2,
+        receptor_hidden_dim: int = 32,
+        receptor_layers: int = 1,
+        hcn_hidden_dim: int = 32,
+        hcn_layers: int = 1,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(
+            input_dim=input_dim,
+            state_dim=state_dim,
+            hidden_dim=hidden_dim,
+            layers=layers,
+            dropout=dropout,
+            width_multiplier=width_multiplier,
+            receptor_hidden_dim=receptor_hidden_dim,
+            receptor_layers=receptor_layers,
+            **kwargs,
+        )
+        width = hidden_dim * width_multiplier
+        self.architecture = "conv_lstm_receptor_hcn_gru"
+        self.head = nn.Sequential(
+            nn.Linear(width, width), nn.SiLU(), nn.Linear(width, 13)
+        )
+        self.hcn_encoder = nn.Sequential(
+            nn.Linear(len(self.hcn_feature_indices), hcn_hidden_dim), nn.SiLU()
+        )
+        self.hcn_recurrent = nn.GRU(
+            hcn_hidden_dim,
+            hcn_hidden_dim,
+            num_layers=hcn_layers,
+            batch_first=True,
+            dropout=dropout if hcn_layers > 1 else 0.0,
+        )
+        self.hcn_head = nn.Sequential(
+            nn.Linear(hcn_hidden_dim, hcn_hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hcn_hidden_dim, 1),
+        )
+
+    def forward(self, features, hidden=None, return_hidden: bool = False):
+        hidden = hidden if isinstance(hidden, dict) else {}
+        history = hidden.get("conv_history")
+        conv_features = (
+            torch.cat([history, features], dim=1) if history is not None else features
+        )
+        encoded = self._encode(conv_features)[:, -features.shape[1] :]
+        memory, recurrent_hidden = self.recurrent(encoded, hidden.get("recurrent"))
+
+        prediction = features[..., : self.state_dim].clone()
+        global_indices = list(self.global_state_indices)
+        prediction[..., global_indices] = (
+            features[..., global_indices] + self.head(memory)
+        )
+        next_hidden = {
+            "recurrent": recurrent_hidden,
+            "conv_history": conv_features[:, -self.context_steps :].detach(),
+        }
+        for name, (state_index, event_index) in self.receptor_specs.items():
+            local_features = features[..., [state_index, event_index]]
+            local_encoded = self.receptor_encoders[name](local_features)
+            local_memory, local_hidden = self.receptor_recurrents[name](
+                local_encoded, hidden.get(f"receptor_{name}")
+            )
+            prediction[..., state_index] = (
+                features[..., state_index]
+                + self.receptor_heads[name](local_memory).squeeze(-1)
+            )
+            next_hidden[f"receptor_{name}"] = local_hidden
+
+        hcn_features = features[..., list(self.hcn_feature_indices)]
+        hcn_encoded = self.hcn_encoder(hcn_features)
+        hcn_memory, hcn_hidden = self.hcn_recurrent(
+            hcn_encoded, hidden.get("hcn")
+        )
+        prediction[..., 8] = (
+            features[..., 8] + self.hcn_head(hcn_memory).squeeze(-1)
+        )
+        next_hidden["hcn"] = hcn_hidden
         return (prediction, next_hidden) if return_hidden else prediction
 
 
@@ -323,6 +421,12 @@ def build_model(architecture: str, input_dim: int, state_dim: int, **kwargs):
         "conv_receptor_gru",
     }:
         return ConvLSTMReceptorGRUSurrogate(input_dim, state_dim, **kwargs)
+    if architecture in {
+        "conv_lstm_receptor_hcn_gru",
+        "convlstm_receptor_hcn_gru",
+        "conv_receptor_hcn_gru",
+    }:
+        return ConvLSTMReceptorHCNGRUSurrogate(input_dim, state_dim, **kwargs)
     if architecture in {"ontology_gru", "causal_gru", "gru_mosaic"}:
         return OntologyGRUMosaic(input_dim, state_dim, **kwargs)
     return RecurrentSurrogate(input_dim, state_dim, architecture=architecture, **kwargs)

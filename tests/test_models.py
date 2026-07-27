@@ -154,6 +154,36 @@ def test_hcn_composite_has_near_matched_composite_control():
     assert abs(candidate_parameters - control_parameters) / candidate_parameters < 0.001
 
 
+def test_hcn_auxiliary_head_trains_and_is_inference_transparent():
+    torch.manual_seed(9)
+    model = build_model(
+        "conv_lstm_receptor_hcn_aux", 21, 17, hidden_dim=8, layers=1,
+        receptor_hidden_dim=5, hcn_hidden_dim=6, auxiliary_hidden_dim=7,
+    )
+    features = torch.randn(2, 6, 21)
+    prediction, auxiliary = model.forward_with_auxiliary(features)
+    torch.testing.assert_close(model(features), prediction)
+    assert auxiliary.shape == (2, 6)
+    (prediction.square().mean() + auxiliary.square().mean()).backward()
+    assert all(parameter.grad is not None for parameter in model.parameters())
+
+
+def test_hcn_auxiliary_has_near_matched_capacity_control():
+    candidate = build_model(
+        "conv_lstm_receptor_hcn_aux", 21, 17, hidden_dim=128, layers=3,
+        width_multiplier=2, receptor_hidden_dim=32, hcn_hidden_dim=32,
+        auxiliary_hidden_dim=32,
+    )
+    control = build_model(
+        "conv_lstm_receptor_hcn_gru", 21, 17, hidden_dim=128, layers=3,
+        width_multiplier=2, receptor_hidden_dim=32, hcn_hidden_dim=32,
+        global_head_dim=287,
+    )
+    candidate_parameters = sum(parameter.numel() for parameter in candidate.parameters())
+    control_parameters = sum(parameter.numel() for parameter in control.parameters())
+    assert abs(candidate_parameters - control_parameters) / candidate_parameters < 0.001
+
+
 def test_batched_rollout_matches_individual_rollouts(capsys):
     torch.manual_seed(8)
     model = build_model("conv_lstm", 21, 17, hidden_dim=8, layers=1)

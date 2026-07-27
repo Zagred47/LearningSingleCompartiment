@@ -184,6 +184,8 @@ def train_model(
     global_head_dim: int | None = None,
     hcn_hidden_dim: int = 32,
     hcn_layers: int = 1,
+    auxiliary_hidden_dim: int = 32,
+    auxiliary_weight: float | None = None,
     dropout: float = 0.1,
     learning_rate: float = 1e-3,
     seed: int = 2026,
@@ -227,8 +229,12 @@ def train_model(
         global_head_dim=global_head_dim,
         hcn_hidden_dim=hcn_hidden_dim,
         hcn_layers=hcn_layers,
+        auxiliary_hidden_dim=auxiliary_hidden_dim,
         dropout=dropout,
     ).to(device_obj)
+    resolved_auxiliary_weight = (
+        1.0 / len(STATE_NAMES) if auxiliary_weight is None else auxiliary_weight
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=max(1, epochs), eta_min=learning_rate * 0.05
@@ -255,7 +261,12 @@ def train_model(
                 dtype=torch.float16,
                 enabled=amp_enabled,
             ):
-                loss = _loss(model(features), target)
+                if hasattr(model, "forward_with_auxiliary"):
+                    prediction, auxiliary_prediction = model.forward_with_auxiliary(features)
+                    auxiliary_loss = (auxiliary_prediction - target[..., 8]).square().mean()
+                    loss = _loss(prediction, target) + resolved_auxiliary_weight * auxiliary_loss
+                else:
+                    loss = _loss(model(features), target)
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -322,6 +333,7 @@ def train_model(
                 "global_head_dim": global_head_dim,
                 "hcn_hidden_dim": hcn_hidden_dim,
                 "hcn_layers": hcn_layers,
+                "auxiliary_hidden_dim": auxiliary_hidden_dim,
                 "dropout": dropout,
             },
             "normalization": normalization.to_dict(),
@@ -338,6 +350,9 @@ def train_model(
         "train_fraction": train_fraction,
         "train_trajectories": len(train_data.selected_trajectories),
         "train_windows": len(train_data),
+        "auxiliary_weight": (
+            resolved_auxiliary_weight if hasattr(model, "forward_with_auxiliary") else None
+        ),
         "parameters": int(sum(parameter.numel() for parameter in model.parameters())),
         "epochs_trained": len(history),
         "best_validation_loss": best_loss,

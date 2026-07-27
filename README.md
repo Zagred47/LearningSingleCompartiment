@@ -86,6 +86,13 @@ cambiare altro, se la coordinata di stato 8 può essere assegnata a una quarta
 GRU locale. Il controllo parte dallo stesso composito e aggiunge una quantità
 quasi identica di parametri alla testa globale.
 
+L'esperimento diagnostico
+`notebooks/kaggle_composite_experiment_03b_auxiliary.ipynb` distingue la
+mancata separabilità della coordinata 8 dalla perdita di supervisione
+condivisa. Mantiene l'output locale e aggiunge al backbone una testa ausiliaria
+standard, usata solo durante il training, confrontandola con un controllo di
+capacità quasi identico.
+
 Per usare direttamente GitHub in Kaggle, clonare prima la repo nella directory
 `/kaggle/working` e aprire/eseguire il notebook dalla root del checkout.
 

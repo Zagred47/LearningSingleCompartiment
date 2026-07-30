@@ -19,6 +19,26 @@ from .faithful_dataset import (
     generate_faithful_dataset,
     validate_faithful_dataset,
 )
+from .micro_neuron import (
+    COMPARTMENT_NAMES,
+    MICRO_STATE_NAMES,
+    SYNAPTIC_REGIONS,
+    FourCompartmentHay,
+    MicroGeometryConfig,
+    MicroHayConfig,
+    MicroSynapseConfig,
+    ReducedCompartmentGeometry,
+)
+from .micro_dataset import (
+    MICRO_REGIME_NAMES,
+    BalancedSpatialSpikeDrive,
+    MicroDatasetConfig,
+    MicroDriveConfig,
+    build_micro_synapse_metadata,
+    generate_micro_dataset,
+    micro_input_names,
+    validate_micro_dataset,
+)
 
 __all__ = [
     "CURRENT_NAMES",
@@ -44,4 +64,20 @@ __all__ = [
     "FaithfulSimulationConfig",
     "generate_faithful_dataset",
     "validate_faithful_dataset",
+    "COMPARTMENT_NAMES",
+    "MICRO_REGIME_NAMES",
+    "MICRO_STATE_NAMES",
+    "SYNAPTIC_REGIONS",
+    "BalancedSpatialSpikeDrive",
+    "FourCompartmentHay",
+    "MicroDatasetConfig",
+    "MicroDriveConfig",
+    "MicroGeometryConfig",
+    "MicroHayConfig",
+    "MicroSynapseConfig",
+    "ReducedCompartmentGeometry",
+    "build_micro_synapse_metadata",
+    "generate_micro_dataset",
+    "micro_input_names",
+    "validate_micro_dataset",
 ]

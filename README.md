@@ -114,6 +114,25 @@ la GRU locale con una MLP residuale standard priva di memoria autonoma.
 Per usare direttamente GitHub in Kaggle, clonare prima la repo nella directory
 `/kaggle/working` e aprire/eseguire il notebook dalla root del checkout.
 
+## Micro-neurone Hay spaziale a quattro compartimenti
+
+Il nuovo teacher fisiologico ridotto è `basale -- soma -- tronco apicale --
+tuft`. Conserva canali Hay specifici per regione, correnti assiali, calcio,
+gate completi e stati a doppia esponenziale di AMPA/NMDA/GABA-A. Non possiede
+un input di corrente iniettata: gli unici ingressi sono spike binari su
+sinapsi eccitatorie e inibitorie fisse, allocate fra basale, tronco e tuft in
+proporzione alla lunghezza dendritica rappresentata.
+
+```bash
+python scripts/generate_micro_dataset.py artifacts/hay_micro_4c_v1.h5 --workers 4
+```
+
+Su Kaggle usare `notebooks/kaggle_micro_hay_4comp_dataset.ipynb`. Il notebook
+mostra avanzamento ed ETA, riusa la cache HDF5, controlla i nove regimi e
+visualizza raster, potenziali, calcio e variabili lente. Stati e correnti sono
+target/diagnostica e non vengono forniti come input al futuro surrogate
+input-only.
+
 ## API essenziale
 
 ```python

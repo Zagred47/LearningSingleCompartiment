@@ -133,6 +133,15 @@ visualizza raster, potenziali, calcio e variabili lente. Stati e correnti sono
 target/diagnostica e non vengono forniti come input al futuro surrogate
 input-only.
 
+Il primo training input-only è in
+`notebooks/kaggle_micro_input_only_cfc_01.ipynb`. Confronta una GRU standard
+con il layer CfC ufficiale di `ncps`, selezionando automaticamente una GRU con
+budget di parametri vicino. Cinque bin da 0,1 ms vengono concatenati in ordine
+per ogni passo di rete: il training GPU è più pratico senza perdere identità o
+timing degli spike. Il burn-in è costituito esclusivamente da spike; i suoi
+stati fisici sono usati soltanto come target intermedi per addestrare la
+dinamica causale con truncated BPTT.
+
 ## API essenziale
 
 ```python

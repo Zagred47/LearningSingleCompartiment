@@ -75,6 +75,12 @@ Default data comprise 20 train, 4 validation and 6 test trajectories, each
 with 2 s warm-up and 5 s retained data. Seeds are disjoint by split. The HDF5
 cache stores binary inputs, complete states, currents, aggregate event counts,
 instantaneous rates, regimes and somatic spike labels plus a schema manifest.
+The random warm-up spike matrix is stored separately as `burnin_inputs`: an
+input-only recurrent model must consume it to reconstruct its initial latent
+state instead of receiving the teacher's physical state at the crop boundary.
+`burnin_states` supplies supervision along that causal history but is never a
+network input; this permits truncated backpropagation without making the
+random crop state unknowable.
 
 ## Learning boundary
 

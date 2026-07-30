@@ -82,4 +82,6 @@ def test_micro_dataset_cache_roundtrip(tmp_path):
         assert handle.attrs["external_current_injection"] == np.bool_(False)
         assert handle["train/states"].shape == (1, 121, 61)
         assert handle["test/inputs"].shape == (1, 120, 9)
+        assert handle["test/burnin_inputs"].shape == (1, 40, 9)
+        assert handle["test/burnin_states"].shape == (1, 41, 61)
         assert np.isin(handle["train/inputs"][...], (0, 1)).all()

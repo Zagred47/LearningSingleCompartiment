@@ -21,7 +21,7 @@ from .micro_neuron import (
 )
 
 
-MICRO_SCHEMA_VERSION = "1.0.0"
+MICRO_SCHEMA_VERSION = "1.2.0"
 MICRO_MODEL_ID = "hay_2011_four_compartment_spike_driven_v1"
 MICRO_REGIME_NAMES = (
     "quiet_recovery",
@@ -232,6 +232,9 @@ def _run_seed(config: MicroDatasetConfig, seed: int) -> Dict[str, np.ndarray]:
     simulation = teacher.simulate(binary, drive.metadata, config.dt_ms, config.internal_dt_ms)
     start = warmup_steps
     return {
+        "burnin_inputs": binary[:start],
+        "burnin_regimes": regimes[:start],
+        "burnin_states": simulation["states"][: start + 1],
         "states": simulation["states"][start : start + data_steps + 1],
         "currents": simulation["currents"][start : start + data_steps + 1],
         "inputs": binary[start : start + data_steps],
@@ -255,12 +258,17 @@ def validate_micro_dataset(path: str | Path) -> Dict[str, object]:
                 issues.append("unexpected model")
             state_names = json.loads(handle.attrs["state_names_json"])
             input_metadata = json.loads(handle.attrs["input_metadata_json"])
+            stored_config = json.loads(handle.attrs["config_json"])
+            expected_burnin = int(round(stored_config["warmup_ms"] / stored_config["dt_ms"]))
             for split in MICRO_SPLIT_OFFSETS:
                 if split not in handle:
                     issues.append(f"missing split {split}")
                     continue
                 group = handle[split]
                 states, inputs = group["states"], group["inputs"]
+                burnin_inputs = group["burnin_inputs"]
+                burnin_states = group["burnin_states"]
+                burnin_regimes = group["burnin_regimes"]
                 currents, counts = group["currents"], group["event_counts"]
                 regimes, spikes = group["regimes"], group["spikes"]
                 seeds = group["trajectory_seeds"][...]
@@ -273,9 +281,17 @@ def validate_micro_dataset(path: str | Path) -> Dict[str, object]:
                     issues.append(f"{split}: event count shape mismatch")
                 if regimes.shape != inputs.shape[:2] or spikes.shape != inputs.shape[:2]:
                     issues.append(f"{split}: label shape mismatch")
+                if burnin_inputs.shape != (inputs.shape[0], expected_burnin, inputs.shape[2]):
+                    issues.append(f"{split}: burn-in input shape mismatch")
+                if burnin_states.shape != (inputs.shape[0], expected_burnin + 1, states.shape[2]):
+                    issues.append(f"{split}: burn-in state shape mismatch")
+                if burnin_regimes.shape != burnin_inputs.shape[:2]:
+                    issues.append(f"{split}: burn-in regime shape mismatch")
                 if not np.isin(inputs[...], (0, 1)).all():
                     issues.append(f"{split}: inputs are not binary")
-                for name in ("states", "currents", "instantaneous_rates_hz"):
+                if not np.isin(burnin_inputs[...], (0, 1)).all():
+                    issues.append(f"{split}: burn-in inputs are not binary")
+                for name in ("burnin_states", "states", "currents", "instantaneous_rates_hz"):
                     if not np.isfinite(group[name][...]).all():
                         issues.append(f"{split}/{name} contains NaN or Inf")
                 regime_counts = np.bincount(regimes[...].reshape(-1), minlength=len(MICRO_REGIME_NAMES))
@@ -398,6 +414,8 @@ def generate_micro_dataset(
             if len(completed_arrays) != count:
                 raise RuntimeError(f"{split}: incomplete trajectory generation")
             for name, dtype in (
+                ("burnin_inputs", "u1"), ("burnin_regimes", "i1"),
+                ("burnin_states", "f4"),
                 ("states", "f4"), ("currents", "f4"), ("inputs", "u1"),
                 ("event_counts", "u2"), ("spikes", "u1"), ("regimes", "i1"),
                 ("instantaneous_rates_hz", "f4"),

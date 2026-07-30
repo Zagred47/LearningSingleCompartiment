@@ -39,6 +39,13 @@ from .micro_dataset import (
     micro_input_names,
     validate_micro_dataset,
 )
+from .input_only import (
+    InputOnlyCfC,
+    InputOnlyGRU,
+    StateDecoder,
+    count_trainable_parameters,
+    move_hidden,
+)
 
 __all__ = [
     "CURRENT_NAMES",
@@ -80,4 +87,9 @@ __all__ = [
     "generate_micro_dataset",
     "micro_input_names",
     "validate_micro_dataset",
+    "InputOnlyCfC",
+    "InputOnlyGRU",
+    "StateDecoder",
+    "count_trainable_parameters",
+    "move_hidden",
 ]

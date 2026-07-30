@@ -184,6 +184,7 @@ requested = tuple(name.strip() for name in os.environ.get(
 unknown = set(requested) - set(model_builders)
 if unknown:
     raise ValueError(f"unknown models: {sorted(unknown)}")
+REUSE_COMPLETED_MODELS = os.environ.get("HAY_EVENT_REUSE_MODELS", "1") == "1"
 
 
 def tensor(values, indices=None):
@@ -388,6 +389,26 @@ def train_model(name, model):
     return model, best, history
 
 
+def load_completed_model(name, model):
+    checkpoint_path = CHECKPOINTS / f"{name}.pt"
+    history_path = OUTPUT / f"{name}_history.csv"
+    if not REUSE_COMPLETED_MODELS or not checkpoint_path.exists() or not history_path.exists():
+        return None
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
+    same_dataset = checkpoint.get("dataset_report", {}).get("sha256") == dataset_report.get("sha256")
+    same_training = checkpoint.get("training_config") == asdict(CFG)
+    if not (same_dataset and same_training):
+        print(f"{name}: checkpoint presente ma incompatibile; training da zero")
+        return None
+    model = model.to(DEVICE)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    history_frame = pd.read_csv(history_path)
+    history = history_frame.to_dict("records")
+    best = float(history_frame["validation_selection"].min())
+    print(f"{name}: checkpoint completo riutilizzato ({len(history)} epoche), nessun retraining")
+    return model, best, history
+
+
 @torch.no_grad()
 def predict(model):
     model.eval()
@@ -443,7 +464,11 @@ for model_index, name in enumerate(requested):
     torch.manual_seed(CFG.seed + model_index)
     model = model_builders[name]()
     print(name, "parameters:", count_trainable_parameters(model))
-    model, best_validation, history = train_model(name, model)
+    completed = load_completed_model(name, model)
+    if completed is None:
+        model, best_validation, history = train_model(name, model)
+    else:
+        model, best_validation, history = completed
     prediction = predict(model)
     all_predictions[name] = prediction
     truth = test_y[:, 1:]

@@ -256,8 +256,11 @@ class EventAwareStateLoss(nn.Module):
             rapid_gate = (gate_error * event_mask).sum() / event_denominator
         else:
             rapid_gate = global_loss.new_zeros(())
-        soft_probability = torch.sigmoid((pv - self.spike_threshold_mV) / self.soft_temperature_mV)
-        soft_spike = F.binary_cross_entropy(soft_probability.clamp(1e-6, 1 - 1e-6), (tv >= self.spike_threshold_mV).to(tv.dtype))
+        soft_logits = (pv - self.spike_threshold_mV) / self.soft_temperature_mV
+        soft_spike = F.binary_cross_entropy_with_logits(
+            soft_logits,
+            (tv >= self.spike_threshold_mV).to(tv.dtype),
+        )
         terms = {
             "global": global_loss,
             "event_voltage": event_voltage,

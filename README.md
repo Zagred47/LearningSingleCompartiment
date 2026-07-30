@@ -146,6 +146,20 @@ formato `1.2.0`: il notebook ricostruisce deterministicamente soltanto i 2 s
 di burn-in e pretende un replay bit-identico degli input utili prima di
 accettare il file.
 
+Per diagnosticare la GRU addestrata usare
+`notebooks/kaggle_micro_gru_diagnostics_01.ipynb`: espone encoder, hidden,
+decoder e gate reset/update/candidate tramite replay numericamente verificato,
+separando le distribuzioni per spike, burst, rapid-fire e plateau di tuft.
+
+Il passo event-aware completo è
+`notebooks/kaggle_micro_event_aware_training_02.ipynb`. Genera e conserva un
+pool più ampio di traiettorie sinaptiche fisiologiche, cataloga la risposta
+effettiva del teacher e combina un passaggio naturale completo con finestre
+stratificate dotate di 2 s di contesto spike-only. Confronta GRU-MSE,
+GRU event-aware, Branch ELM, ConvGRU e ConvLSTM a circa 318 mila parametri.
+Il test naturale resta intatto; metriche separate descrivono tutte le classi
+di evento. Il contratto dettagliato è in `docs/event_aware_micro_experiment.md`.
+
 ## API essenziale
 
 ```python

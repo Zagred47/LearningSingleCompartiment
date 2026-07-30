@@ -42,10 +42,22 @@ from .micro_dataset import (
 )
 from .input_only import (
     InputOnlyCfC,
+    InputOnlyBranchELM,
+    InputOnlyConvGRU,
+    InputOnlyConvLSTM,
     InputOnlyGRU,
     StateDecoder,
     count_trainable_parameters,
     move_hidden,
+)
+from .event_aware import (
+    MICRO_EVENT_NAMES,
+    EventAwareStateLoss,
+    MicroEventConfig,
+    StratifiedWindowSampler,
+    classify_micro_events,
+    event_catalog,
+    replay_gru_gates,
 )
 
 __all__ = [
@@ -90,8 +102,18 @@ __all__ = [
     "upgrade_micro_dataset_v1",
     "validate_micro_dataset",
     "InputOnlyCfC",
+    "InputOnlyBranchELM",
+    "InputOnlyConvGRU",
+    "InputOnlyConvLSTM",
     "InputOnlyGRU",
     "StateDecoder",
     "count_trainable_parameters",
     "move_hidden",
+    "MICRO_EVENT_NAMES",
+    "EventAwareStateLoss",
+    "MicroEventConfig",
+    "StratifiedWindowSampler",
+    "classify_micro_events",
+    "event_catalog",
+    "replay_gru_gates",
 ]

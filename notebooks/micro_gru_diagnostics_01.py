@@ -13,6 +13,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPOSITORY_ROOT / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
+for module_name in tuple(sys.modules):
+    if module_name == "hay_single_compartment" or module_name.startswith("hay_single_compartment."):
+        del sys.modules[module_name]
 
 import h5py
 import matplotlib

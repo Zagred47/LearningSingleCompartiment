@@ -141,6 +141,10 @@ per ogni passo di rete: il training GPU è più pratico senza perdere identità 
 timing degli spike. Il burn-in è costituito esclusivamente da spike; i suoi
 stati fisici sono usati soltanto come target intermedi per addestrare la
 dinamica causale con truncated BPTT.
+I dataset schema `1.0.0` già generati vengono migrati automaticamente al
+formato `1.2.0`: il notebook ricostruisce deterministicamente soltanto i 2 s
+di burn-in e pretende un replay bit-identico degli input utili prima di
+accettare il file.
 
 ## API essenziale
 

@@ -11,6 +11,7 @@ from hay_single_compartment import (
     MicroDriveConfig,
     build_micro_synapse_metadata,
     generate_micro_dataset,
+    upgrade_micro_dataset_v1,
     validate_micro_dataset,
 )
 
@@ -85,3 +86,22 @@ def test_micro_dataset_cache_roundtrip(tmp_path):
         assert handle["test/burnin_inputs"].shape == (1, 40, 9)
         assert handle["test/burnin_states"].shape == (1, 41, 61)
         assert np.isin(handle["train/inputs"][...], (0, 1)).all()
+
+
+def test_schema_one_cache_can_replay_and_upgrade_burnin(tmp_path):
+    old_path = tmp_path / "old.h5"
+    new_path = tmp_path / "upgraded.h5"
+    config = tiny_config()
+    generate_micro_dataset(old_path, config)
+    with h5py.File(old_path, "r+") as handle:
+        handle.attrs["schema_version"] = "1.0.0"
+        for split in ("train", "validation", "test"):
+            del handle[f"{split}/burnin_inputs"]
+            del handle[f"{split}/burnin_regimes"]
+            del handle[f"{split}/burnin_states"]
+    report = upgrade_micro_dataset_v1(old_path, new_path, progress=True)
+    assert report["valid"] and report["upgraded"]
+    with h5py.File(new_path, "r") as handle:
+        assert handle.attrs["schema_version"] == "1.2.0"
+        assert handle.attrs["upgraded_from_schema"] == "1.0.0"
+        assert handle["train/burnin_states"].shape == (1, 41, 61)

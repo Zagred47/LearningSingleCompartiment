@@ -37,6 +37,7 @@ from .micro_dataset import (
     build_micro_synapse_metadata,
     generate_micro_dataset,
     micro_input_names,
+    upgrade_micro_dataset_v1,
     validate_micro_dataset,
 )
 from .input_only import (
@@ -86,6 +87,7 @@ __all__ = [
     "build_micro_synapse_metadata",
     "generate_micro_dataset",
     "micro_input_names",
+    "upgrade_micro_dataset_v1",
     "validate_micro_dataset",
     "InputOnlyCfC",
     "InputOnlyGRU",

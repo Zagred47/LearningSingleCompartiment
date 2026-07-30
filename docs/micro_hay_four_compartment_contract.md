@@ -82,6 +82,11 @@ state instead of receiving the teacher's physical state at the crop boundary.
 network input; this permits truncated backpropagation without making the
 random crop state unknowable.
 
+Schema-1.0 caches can be upgraded without repeating the retained 5 s. The
+upgrade replays each seed, simulates only the 2 s burn-in, requires bit-exact
+agreement with every already stored retained input and checks the crop-boundary
+state to `1e-5` before writing schema 1.2.0.
+
 ## Learning boundary
 
 Only the binary presynaptic spike matrix is a model input. Complete states,

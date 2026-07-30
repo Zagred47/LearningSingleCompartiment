@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
@@ -17,7 +18,10 @@ from .micro_neuron import (
     MICRO_STATE_NAMES,
     SYNAPTIC_REGIONS,
     FourCompartmentHay,
+    MicroGeometryConfig,
     MicroHayConfig,
+    MicroSynapseConfig,
+    ReducedCompartmentGeometry,
 )
 
 
@@ -77,6 +81,29 @@ class MicroDatasetConfig:
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, object]) -> "MicroDatasetConfig":
+        values = dict(values)
+        teacher_values = dict(values.pop("teacher", {}))
+        geometry_values = dict(teacher_values.pop("geometry", {}))
+        geometry = MicroGeometryConfig(
+            **{
+                name: ReducedCompartmentGeometry(**geometry_values[name])
+                for name in ("soma", "basal", "trunk", "tuft")
+            },
+            axial_resistivity_ohm_cm=geometry_values.get(
+                "axial_resistivity_ohm_cm", 100.0
+            ),
+        )
+        synapses = MicroSynapseConfig(**teacher_values.pop("synapses", {}))
+        teacher = MicroHayConfig(
+            geometry=geometry, synapses=synapses, **teacher_values
+        )
+        drive = MicroDriveConfig(**dict(values.pop("drive", {})))
+        result = cls(teacher=teacher, drive=drive, **values)
+        result.validate()
+        return result
 
 
 def _json(value: object) -> str:
@@ -242,6 +269,25 @@ def _run_seed(config: MicroDatasetConfig, seed: int) -> Dict[str, np.ndarray]:
         "spikes": simulation["spikes"][start : start + data_steps],
         "regimes": regimes[start : start + data_steps],
         "instantaneous_rates_hz": rates[start : start + data_steps],
+    }
+
+
+def _run_burnin_seed(config: MicroDatasetConfig, seed: int) -> Dict[str, np.ndarray]:
+    """Reconstruct a v1.0 burn-in while retaining a replay check suffix."""
+
+    teacher = FourCompartmentHay(config.teacher)
+    drive = BalancedSpatialSpikeDrive(config)
+    warmup_steps = int(round(config.warmup_ms / config.dt_ms))
+    data_steps = int(round(config.duration_ms / config.dt_ms))
+    binary, regimes, _ = drive.sample(warmup_steps + data_steps, config.dt_ms, seed)
+    simulation = teacher.simulate(
+        binary[:warmup_steps], drive.metadata, config.dt_ms, config.internal_dt_ms
+    )
+    return {
+        "burnin_inputs": binary[:warmup_steps],
+        "burnin_regimes": regimes[:warmup_steps],
+        "burnin_states": simulation["states"],
+        "retained_inputs": binary[warmup_steps:],
     }
 
 
@@ -436,6 +482,114 @@ def generate_micro_dataset(
         raise ValueError(f"generated an invalid dataset: {report['issues']}")
     report.update({"cache_hit": False, "path": str(output_path), "sha256": _sha256(output_path)})
     output_path.with_suffix(".manifest.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return report
+
+
+def upgrade_micro_dataset_v1(
+    source_path: str | Path,
+    destination_path: str | Path,
+    *,
+    workers: int = 1,
+    progress: bool = False,
+) -> Dict[str, object]:
+    """Upgrade a deterministic schema-1.0 cache by replaying only burn-in.
+
+    The old 5 s retained trajectories are copied unchanged.  Every regenerated
+    random stream must reproduce its retained binary input exactly, and the
+    final burn-in state must match the stored crop state within float32
+    precision before the destination is accepted.
+    """
+
+    source_path, destination_path = Path(source_path), Path(destination_path)
+    if source_path.resolve() == destination_path.resolve():
+        raise ValueError("upgrade destination must differ from source")
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    with h5py.File(source_path, "r") as source:
+        if source.attrs.get("model") != MICRO_MODEL_ID:
+            raise ValueError("source is not the four-compartment micro dataset")
+        if source.attrs.get("schema_version") != "1.0.0":
+            raise ValueError("automatic upgrade supports schema 1.0.0 only")
+        config = MicroDatasetConfig.from_dict(json.loads(source.attrs["config_json"]))
+        split_seeds = {
+            split: source[f"{split}/trajectory_seeds"][...].astype(np.int64)
+            for split in MICRO_SPLIT_OFFSETS
+        }
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination_path.with_suffix(destination_path.suffix + ".partial")
+    shutil.copy2(source_path, partial)
+    total = sum(len(seeds) for seeds in split_seeds.values())
+    completed = 0
+    started = time.perf_counter()
+    with h5py.File(partial, "r+") as handle:
+        for split, seeds in split_seeds.items():
+            group = handle[split]
+            count = len(seeds)
+            results: list[Dict[str, np.ndarray] | None] = [None] * count
+
+            def finished(index: int, result: Dict[str, np.ndarray]) -> None:
+                nonlocal completed
+                retained = group["inputs"][index]
+                if not np.array_equal(result["retained_inputs"], retained):
+                    raise ValueError(f"{split}/{index}: RNG replay does not match retained inputs")
+                boundary_error = float(np.max(np.abs(
+                    result["burnin_states"][-1] - group["states"][index, 0]
+                )))
+                if boundary_error > 1.0e-5:
+                    raise ValueError(
+                        f"{split}/{index}: burn-in boundary mismatch {boundary_error:.3e}"
+                    )
+                results[index] = result
+                completed += 1
+                if progress:
+                    elapsed = time.perf_counter() - started
+                    eta = (total - completed) * elapsed / completed
+                    print(
+                        f"[upgrade] {completed:>3}/{total} "
+                        f"({100.0 * completed / total:5.1f}%) | {split} {index + 1}/{count} "
+                        f"| elapsed {elapsed:7.1f}s | ETA {eta:7.1f}s",
+                        flush=True,
+                    )
+
+            if workers == 1:
+                for index, seed in enumerate(seeds):
+                    finished(index, _run_burnin_seed(config, int(seed)))
+            else:
+                with ProcessPoolExecutor(max_workers=workers) as executor:
+                    futures = {
+                        executor.submit(_run_burnin_seed, config, int(seed)): index
+                        for index, seed in enumerate(seeds)
+                    }
+                    for future in as_completed(futures):
+                        finished(futures[future], future.result())
+            complete = [item for item in results if item is not None]
+            for name, dtype in (
+                ("burnin_inputs", "u1"),
+                ("burnin_regimes", "i1"),
+                ("burnin_states", "f4"),
+            ):
+                group.create_dataset(
+                    name,
+                    data=np.stack([item[name] for item in complete]).astype(dtype),
+                    compression="gzip",
+                    shuffle=True,
+                )
+        handle.attrs["schema_version"] = MICRO_SCHEMA_VERSION
+        handle.attrs["upgraded_from_schema"] = "1.0.0"
+        handle.attrs["upgrade_method"] = "deterministic_seed_replay_burnin_only"
+    partial.replace(destination_path)
+    report = validate_micro_dataset(destination_path)
+    if not report["valid"]:
+        raise ValueError(f"upgraded dataset is invalid: {report['issues']}")
+    report.update({
+        "cache_hit": False,
+        "upgraded": True,
+        "path": str(destination_path),
+        "sha256": _sha256(destination_path),
+    })
+    destination_path.with_suffix(".manifest.json").write_text(
         json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
     )
     return report

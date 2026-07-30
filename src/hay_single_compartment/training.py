@@ -20,6 +20,15 @@ from .ontology import ONTOLOGY_GROUPS
 from .simulator import INPUT_NAMES, STATE_NAMES
 
 
+def _dataset_schema(dataset_path: str | Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Read feature names from HDF5, with backward-compatible fallbacks."""
+
+    with h5py.File(dataset_path, "r") as handle:
+        state_names = tuple(json.loads(handle.attrs.get("state_names_json", json.dumps(STATE_NAMES))))
+        input_names = tuple(json.loads(handle.attrs.get("input_names_json", json.dumps(INPUT_NAMES))))
+    return state_names, input_names
+
+
 def seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -53,6 +62,7 @@ def one_step_metrics(
     split: str,
     normalization: Normalization,
     device: str | torch.device = "cpu",
+    state_names: Sequence[str] | None = None,
 ) -> Dict[str, object]:
     device = torch.device(device)
     model.eval()
@@ -73,18 +83,26 @@ def one_step_metrics(
     rmse = np.sqrt(np.mean(error**2, axis=(0, 1)))
     persistence_error = states[:, :-1] - target
     persistence_rmse = np.sqrt(np.mean(persistence_error**2, axis=(0, 1)))
-    return {
+    state_names = tuple(state_names or _dataset_schema(dataset_path)[0])
+    result = {
         "normalized_mse": float(np.mean((prediction_n - (target - normalization.state_mean) / normalization.state_std) ** 2)),
         "voltage_rmse_mv": float(rmse[0]),
         "calcium_rmse_mm": float(rmse[1]),
         "mean_normalized_rmse": float(np.mean(rmse / normalization.state_std)),
         "persistence_voltage_rmse_mv": float(persistence_rmse[0]),
-        "per_state_rmse": {name: float(value) for name, value in zip(STATE_NAMES, rmse)},
-        "per_group_normalized_rmse": {
-            group.name: float(np.mean(rmse[list(group.output_indices)] / normalization.state_std[list(group.output_indices)]))
-            for group in ONTOLOGY_GROUPS
-        },
+        "per_state_rmse": {name: float(value) for name, value in zip(state_names, rmse)},
     }
+    if tuple(state_names) == tuple(STATE_NAMES):
+        result["per_group_normalized_rmse"] = {
+            group.name: float(
+                np.mean(
+                    rmse[list(group.output_indices)]
+                    / normalization.state_std[list(group.output_indices)]
+                )
+            )
+            for group in ONTOLOGY_GROUPS
+        }
+    return result
 
 
 @torch.no_grad()
@@ -102,7 +120,8 @@ def rollout_batch(
     model.eval()
     initial_states = np.asarray(initial_states, dtype=np.float32)
     inputs = np.asarray(inputs, dtype=np.float32)
-    if initial_states.ndim != 2 or initial_states.shape[1] != len(STATE_NAMES):
+    state_dim = len(normalization.state_mean)
+    if initial_states.ndim != 2 or initial_states.shape[1] != state_dim:
         raise ValueError("initial_states must have shape [batch, state_dim]")
     if inputs.ndim != 3 or inputs.shape[0] != initial_states.shape[0]:
         raise ValueError("inputs must have shape [batch, steps, input_dim]")
@@ -115,7 +134,7 @@ def rollout_batch(
     inputs_normalized = (inputs_tensor - input_mean) / input_std
     current = torch.as_tensor(initial_states, dtype=torch.float32, device=device)
     prediction = torch.empty(
-        (len(initial_states), inputs.shape[1] + 1, len(STATE_NAMES)),
+        (len(initial_states), inputs.shape[1] + 1, state_dim),
         dtype=torch.float32,
         device=device,
     )
@@ -129,8 +148,12 @@ def rollout_batch(
         next_n, hidden = model(features, hidden=hidden, return_hidden=True)
         next_state = next_n[:, 0] * state_std + state_mean
         next_state[:, 1] = torch.clamp(next_state[:, 1], min=0.0)
-        next_state[:, 2:14] = torch.clamp(next_state[:, 2:14], 0.0, 1.0)
-        next_state[:, 14:17] = torch.clamp(next_state[:, 14:17], min=0.0)
+        next_state[:, 2 : state_dim - 3] = torch.clamp(
+            next_state[:, 2 : state_dim - 3], 0.0, 1.0
+        )
+        next_state[:, state_dim - 3 :] = torch.clamp(
+            next_state[:, state_dim - 3 :], min=0.0
+        )
         prediction[:, index + 1] = next_state
         current = next_state
         completed = index + 1
@@ -202,6 +225,9 @@ def train_model(
 
     seed_everything(seed)
     device_obj = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    state_names, input_names = _dataset_schema(dataset_path)
+    state_dim = len(state_names)
+    input_dim = len(input_names)
     normalization = Normalization.from_h5(dataset_path)
     train_data = SequenceWindowDataset(
         dataset_path,
@@ -219,8 +245,8 @@ def train_model(
 
     model = build_model(
         architecture,
-        input_dim=len(STATE_NAMES) + len(INPUT_NAMES),
-        state_dim=len(STATE_NAMES),
+        input_dim=state_dim + input_dim,
+        state_dim=state_dim,
         hidden_dim=hidden_dim,
         layers=layers,
         width_multiplier=width_multiplier,
@@ -235,7 +261,7 @@ def train_model(
         dropout=dropout,
     ).to(device_obj)
     resolved_auxiliary_weight = (
-        1.0 / len(STATE_NAMES) if auxiliary_weight is None else auxiliary_weight
+        1.0 / state_dim if auxiliary_weight is None else auxiliary_weight
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -315,7 +341,9 @@ def train_model(
     if best_state is None:
         raise RuntimeError("training produced no checkpoint")
     model.load_state_dict(best_state)
-    metrics = one_step_metrics(model, dataset_path, "test", normalization, device_obj)
+    metrics = one_step_metrics(
+        model, dataset_path, "test", normalization, device_obj, state_names=state_names
+    )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -340,8 +368,8 @@ def train_model(
                 "dropout": dropout,
             },
             "normalization": normalization.to_dict(),
-            "state_names": list(STATE_NAMES),
-            "input_names": list(INPUT_NAMES),
+            "state_names": list(state_names),
+            "input_names": list(input_names),
         },
         checkpoint_path,
     )

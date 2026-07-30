@@ -164,12 +164,6 @@ class ConvLSTMReceptorGRUSurrogate(ConvLSTMSurrogate):
     GRUs that read their own conductance and matching event count.
     """
 
-    receptor_specs = {
-        "ampa": (14, 18),
-        "nmda": (15, 19),
-        "gabaa": (16, 20),
-    }
-
     def __init__(
         self,
         input_dim: int,
@@ -183,8 +177,8 @@ class ConvLSTMReceptorGRUSurrogate(ConvLSTMSurrogate):
         global_head_dim: int | None = None,
         **kwargs: object,
     ) -> None:
-        if state_dim != 17 or input_dim != 21:
-            raise ValueError("conv_lstm_receptor_gru requires the 17-state, 4-input schema")
+        if input_dim != state_dim + 4 or state_dim < 5:
+            raise ValueError("conv_lstm_receptor_gru requires states followed by four inputs")
         super().__init__(
             input_dim=input_dim,
             state_dim=state_dim,
@@ -195,13 +189,19 @@ class ConvLSTMReceptorGRUSurrogate(ConvLSTMSurrogate):
             **kwargs,
         )
         width = hidden_dim * width_multiplier
+        self.global_state_count = state_dim - 3
+        self.receptor_specs = {
+            "ampa": (state_dim - 3, state_dim + 1),
+            "nmda": (state_dim - 2, state_dim + 2),
+            "gabaa": (state_dim - 1, state_dim + 3),
+        }
         global_head_width = global_head_dim or width
         self.architecture = "conv_lstm_receptor_gru"
         # The shared backbone owns only V, calcium, and the 12 channel gates.
         self.head = nn.Sequential(
             nn.Linear(width, global_head_width),
             nn.SiLU(),
-            nn.Linear(global_head_width, 14),
+            nn.Linear(global_head_width, self.global_state_count),
         )
         self.receptor_encoders = nn.ModuleDict()
         self.receptor_recurrents = nn.ModuleDict()
@@ -231,7 +231,9 @@ class ConvLSTMReceptorGRUSurrogate(ConvLSTMSurrogate):
         memory, recurrent_hidden = self.recurrent(encoded, hidden.get("recurrent"))
 
         prediction = features[..., : self.state_dim].clone()
-        prediction[..., :14] = features[..., :14] + self.head(memory)
+        prediction[..., : self.global_state_count] = (
+            features[..., : self.global_state_count] + self.head(memory)
+        )
         next_hidden = {
             "recurrent": recurrent_hidden,
             "conv_history": conv_features[:, -self.context_steps :].detach(),

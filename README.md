@@ -9,6 +9,11 @@ surrogati neurali come MLP, RNN, GRU, LSTM e una ConvLSTM temporale capiente.
 > equivalente al modello Hay multicompartmentale originale. Non richiede
 > NEURON né meccanismi NMODL compilati.
 
+La repo include anche `FaithfulHaySoma`, un secondo simulatore separato che
+trascrive le cinetiche e i parametri somatici originali di
+`L5PCbiophys3.hoc` (Hay 2011, Figura 4). È fedele al singolo compartimento
+somatico, ma non pretende di riprodurre il cavo multicompartmentale completo.
+
 ## Cosa viene simulato
 
 Esiste una sola tensione di membrana. Il suo stato Markoviano comprende 17
@@ -49,6 +54,14 @@ default contiene 12 traiettorie train, 3 validation e 3 test da 500 ms,
 campionate a 0,1 ms con integrazione interna a 0,025 ms.
 
 ## Notebook Kaggle
+
+Per il compartimento fedele usare
+`notebooks/kaggle_faithful_hay_soma.ipynb`. Genera traiettorie da 2 s con tutti
+i 17 stati intrinseci del soma Hay più tre conduttanze sinaptiche, garantisce
+la copertura dei cinque regimi, mostra progress/ETA e riusa una cache HDF5 da
+`/kaggle/input` o `/kaggle/working`. Il primo benchmark riparte soltanto dalla
+ConvLSTM Large; il dataset può essere pubblicato come Kaggle Dataset e montato
+nelle sessioni successive senza rigenerarlo.
 
 Aprire `notebooks/kaggle_single_compartment.ipynb`, attivare una GPU Kaggle e
 usare **Run all**. Il notebook:

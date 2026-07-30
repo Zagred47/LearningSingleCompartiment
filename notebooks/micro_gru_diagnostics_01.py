@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
+
+# `%run` on Kaggle can execute before an editable install becomes visible to
+# the active kernel.  Prefer the checked-out source tree deterministically.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = REPOSITORY_ROOT / "src"
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 
 import h5py
 import matplotlib

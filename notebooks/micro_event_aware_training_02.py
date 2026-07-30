@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+# Make `%run` robust to Kaggle kernels that do not immediately observe an
+# editable install performed in a previous cell.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = REPOSITORY_ROOT / "src"
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 
 import h5py
 import numpy as np

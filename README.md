@@ -167,6 +167,13 @@ resta sempre attiva, mentre deficit di picco, derivata, gate rapidi e logit
 spike bilanciati entrano gradualmente. Salva `last` e `best` a ogni epoca e
 riprende automaticamente dopo un'interruzione Kaggle.
 
+Per non confondere il fine-tuning con la capacità di apprendere da zero,
+`notebooks/kaggle_micro_conservative_scratch_04.ipynb` addestra invece GRU,
+Branch ELM, ConvGRU e ConvLSTM da inizializzazione casuale. Tutte ricevono 10
+epoche di sola MSE, poi la stessa loss conservativa entra con curriculum. Il
+notebook richiede l'HDF5 già montato e si arresta se non lo trova: non avvia
+silenziosamente una nuova generazione.
+
 ## API essenziale
 
 ```python

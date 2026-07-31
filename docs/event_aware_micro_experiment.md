@@ -77,3 +77,13 @@ parte dal checkpoint GRU-MSE e usa un curriculum lineare con:
 Il learning rate è ridotto a `1e-4`. Il checkpoint `last` include modello,
 optimizer, scheduler, scaler, epoca e history; il resume è deterministico a
 livello di epoca. Il checkpoint `best` è usato per il test naturale finale.
+
+## Confronto da inizializzazione casuale
+
+Il fine-tuning non sostituisce il confronto architetturale. Nel notebook
+`kaggle_micro_conservative_scratch_04.ipynb`, GRU, Branch ELM, ConvGRU e
+ConvLSTM partono tutte da pesi casuali e con budget di circa 318k parametri.
+Le prime 10 epoche usano esclusivamente la MSE globale; nelle 5 successive la
+loss conservativa passa linearmente da zero a uno. La vecchia loss event-aware
+fallita non viene chiamata. Ogni architettura salva inoltre uno stato `last`
+completo di optimizer, scheduler e scaler, oltre al checkpoint `best`.

@@ -46,6 +46,7 @@ except ImportError:  # The Kaggle runtime provides tqdm; keep the script portabl
 from hay_single_compartment import (
     MICRO_EVENT_NAMES,
     MICRO_STATE_NAMES,
+    ConservativeSpikeFineTuneLoss,
     EventAwareStateLoss,
     InputOnlyBranchELM,
     InputOnlyConvGRU,
@@ -77,6 +78,9 @@ class ExperimentConfig:
     stratified_windows_per_epoch: int = 48
     stratified_window_steps: int = 256
     context_steps: int = 4000
+    loss_kind: str = "legacy"
+    mse_warmup_epochs: int = 0
+    event_curriculum_epochs: int = 1
     seed: int = 20260730
 
 
@@ -90,7 +94,12 @@ CFG = ExperimentConfig(
     epochs=int(os.environ.get("HAY_EVENT_EPOCHS", "30")),
     event_replays=int(os.environ.get("HAY_EVENT_REPLAYS", "0")),
     stratified_windows_per_epoch=int(os.environ.get("HAY_EVENT_WINDOWS_PER_EPOCH", "48")),
+    loss_kind=os.environ.get("HAY_EVENT_LOSS", "legacy"),
+    mse_warmup_epochs=int(os.environ.get("HAY_EVENT_MSE_WARMUP_EPOCHS", "0")),
+    event_curriculum_epochs=int(os.environ.get("HAY_EVENT_CURRICULUM_EPOCHS", "1")),
 )
+if CFG.loss_kind not in {"legacy", "conservative"}:
+    raise ValueError("HAY_EVENT_LOSS must be legacy or conservative")
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(CFG.seed)
 np.random.seed(CFG.seed)
@@ -171,6 +180,7 @@ def nearest_model(builder, candidates):
 model_builders = {
     "gru_mse": lambda: InputOnlyGRU(INPUT_DIM, STATE_DIM, hidden_dim=200, decoder_dim=200),
     "gru_event": lambda: InputOnlyGRU(INPUT_DIM, STATE_DIM, hidden_dim=200, decoder_dim=200),
+    "gru_conservative": lambda: InputOnlyGRU(INPUT_DIM, STATE_DIM, hidden_dim=200, decoder_dim=200),
     "branch_elm": lambda: nearest_model(
         lambda memory: InputOnlyBranchELM(INPUT_DIM, STATE_DIM, num_branch=24, num_memory=memory, model_dt_ms=0.5),
         range(64, 257, 8),
@@ -209,8 +219,21 @@ def detach(hidden):
 
 def make_loss(event_aware: bool):
     if event_aware:
+        if CFG.loss_kind == "conservative":
+            return ConservativeSpikeFineTuneLoss(MICRO_STATE_NAMES, state_mean, state_std).to(DEVICE)
         return EventAwareStateLoss(MICRO_STATE_NAMES, state_mean, state_std).to(DEVICE)
     return None
+
+
+def training_event_scale(epoch: int) -> float:
+    if CFG.loss_kind != "conservative":
+        return 1.0
+    if epoch <= CFG.mse_warmup_epochs:
+        return 0.0
+    if CFG.event_curriculum_epochs <= 1:
+        return 1.0
+    progress = (epoch - CFG.mse_warmup_epochs) / CFG.event_curriculum_epochs
+    return float(np.clip(progress, 0.0, 1.0))
 
 
 def model_spec(model):
@@ -276,18 +299,29 @@ def train_model(name, model):
     optimizer = torch.optim.AdamW(model.parameters(), lr=CFG.learning_rate, weight_decay=CFG.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CFG.epochs)
     scaler = torch.amp.GradScaler("cuda", enabled=DEVICE.type == "cuda")
-    history, best, stale = [], float("inf"), 0
+    history, best, stale, start_epoch = [], float("inf"), 0, 1
     started = time.perf_counter()
-    sampler = StratifiedWindowSampler(
-        train_events,
-        CFG.stratified_window_steps,
-        seed=CFG.seed,
-    )
     complete_inputs = np.concatenate((train_burnin, train_x), axis=1)
-    epoch_bar = tqdm(range(1, CFG.epochs + 1), desc=f"train {name}")
+    last_checkpoint_path = CHECKPOINTS / f"{name}_last.pt"
+    if REUSE_COMPLETED_MODELS and last_checkpoint_path.exists():
+        resume = torch.load(last_checkpoint_path, map_location=DEVICE, weights_only=False)
+        same_dataset = resume.get("dataset_sha256") == dataset_report.get("sha256")
+        if resume.get("training_config") == asdict(CFG) and same_dataset:
+            model.load_state_dict(resume["model_state_dict"])
+            optimizer.load_state_dict(resume["optimizer_state_dict"])
+            scheduler.load_state_dict(resume["scheduler_state_dict"])
+            scaler.load_state_dict(resume["scaler_state_dict"])
+            history = resume["history"]
+            best, stale = float(resume["best"]), int(resume["stale"])
+            start_epoch = int(resume["epoch"]) + 1
+            print(f"{name}: resume dall'epoca completata {start_epoch - 1}")
+    epoch_bar = tqdm(range(start_epoch, CFG.epochs + 1), desc=f"train {name}")
     for epoch in epoch_bar:
         model.train()
-        order = np.random.permutation(len(train_x))
+        scale = training_event_scale(epoch)
+        if criterion is not None and hasattr(criterion, "set_event_scale"):
+            criterion.set_event_scale(scale)
+        order = np.random.default_rng(CFG.seed + epoch).permutation(len(train_x))
         running, updates = 0.0, 0
         for offset in range(0, len(order), CFG.batch_trajectories):
             indices = order[offset : offset + CFG.batch_trajectories]
@@ -323,6 +357,11 @@ def train_model(name, model):
                     hidden = detach(hidden)
         # A second, explicitly stratified view.  Every selected window receives
         # a spike-only context, so no teacher state is needed to initialize it.
+        sampler = StratifiedWindowSampler(
+            train_events,
+            CFG.stratified_window_steps,
+            seed=CFG.seed + epoch,
+        )
         sampled_windows = sampler.sample(CFG.stratified_windows_per_epoch)
         for window_offset in range(0, len(sampled_windows), CFG.batch_trajectories):
             rows = sampled_windows[window_offset : window_offset + CFG.batch_trajectories]
@@ -356,16 +395,19 @@ def train_model(name, model):
             running += float(loss.detach())
             updates += 1
         scheduler.step()
+        if criterion is not None and hasattr(criterion, "set_event_scale"):
+            criterion.set_event_scale(1.0)
         validation = evaluate_loss(model, criterion, val_burnin, val_x, val_y_n)
         row = {
             "epoch": epoch,
+            "event_scale": scale,
             "train_loss": running / updates,
             **{f"validation_{key}": value for key, value in validation.items()},
             "elapsed_s": time.perf_counter() - started,
         }
         history.append(row)
         score = validation["selection"]
-        epoch_bar.set_postfix(train=f"{row['train_loss']:.3e}", val=f"{score:.3e}")
+        epoch_bar.set_postfix(train=f"{row['train_loss']:.3e}", val=f"{score:.3e}", scale=f"{scale:.2f}")
         if score < best:
             best, stale = score, 0
             payload = {
@@ -386,9 +428,27 @@ def train_model(name, model):
             torch.save(payload, CHECKPOINTS / f"{name}.pt")
         else:
             stale += 1
-            if stale >= CFG.patience:
-                print(f"{name}: early stop at epoch {epoch}")
-                break
+        torch.save({
+            "format_version": 3,
+            "model_name": name,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "scaler_state_dict": scaler.state_dict(),
+            "training_config": asdict(CFG),
+            "dataset_sha256": dataset_report.get("sha256"),
+            "history": history,
+            "best": best,
+            "stale": stale,
+            "epoch": epoch,
+        }, last_checkpoint_path)
+        pd.DataFrame(history).to_csv(OUTPUT / f"{name}_history_partial.csv", index=False)
+        may_stop = CFG.loss_kind != "conservative" or epoch >= (
+            CFG.mse_warmup_epochs + CFG.event_curriculum_epochs + CFG.patience
+        )
+        if stale >= CFG.patience and may_stop:
+            print(f"{name}: early stop at epoch {epoch}")
+            break
     checkpoint = torch.load(CHECKPOINTS / f"{name}.pt", map_location=DEVICE, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     pd.DataFrame(history).to_csv(OUTPUT / f"{name}_history.csv", index=False)

@@ -278,6 +278,141 @@ class EventAwareStateLoss(nn.Module):
         return total, terms
 
 
+class ConservativeSpikeFineTuneLoss(nn.Module):
+    """Preserve full-state MSE while gradually emphasizing missed spikes.
+
+    This objective is intended for fine-tuning an already converged MSE model,
+    not for training a recurrent surrogate from scratch.  Its rare-event terms
+    are bounded/polynomial, AMP-safe, and asymmetric only where the teacher is
+    genuinely in a spike.  False positive spikes remain penalized by both the
+    global state loss and the negative part of the weighted logit loss.
+    """
+
+    def __init__(
+        self,
+        state_names: Sequence[str],
+        state_mean: np.ndarray | torch.Tensor,
+        state_std: np.ndarray | torch.Tensor,
+        *,
+        global_weight: float = 1.0,
+        peak_under_weight: float = 0.15,
+        derivative_weight: float = 0.05,
+        rapid_gate_weight: float = 0.05,
+        spike_weight: float = 0.03,
+        spike_threshold_mV: float = -20.0,
+        peak_threshold_mV: float = -35.0,
+        voltage_scale_mV: float = 20.0,
+        logit_temperature_mV: float = 2.5,
+        positive_weight_cap: float = 64.0,
+        event_radius_steps: int = 10,
+    ) -> None:
+        super().__init__()
+        names = list(state_names)
+        self.soma_index = names.index("soma.v_mV")
+        self.rapid_gate_indices = tuple(
+            index for index, name in enumerate(names)
+            if name in {
+                "soma.m_NaTa_t", "soma.h_NaTa_t", "soma.m_K_Tst",
+                "soma.h_K_Tst", "soma.m_SKv3_1", "soma.m_Ca_HVA",
+            }
+        )
+        self.register_buffer("state_mean", torch.as_tensor(state_mean, dtype=torch.float32))
+        self.register_buffer("state_std", torch.as_tensor(state_std, dtype=torch.float32))
+        self.register_buffer("event_scale", torch.tensor(0.0, dtype=torch.float32))
+        self.global_weight = global_weight
+        self.peak_under_weight = peak_under_weight
+        self.derivative_weight = derivative_weight
+        self.rapid_gate_weight = rapid_gate_weight
+        self.spike_weight = spike_weight
+        self.spike_threshold_mV = spike_threshold_mV
+        self.peak_threshold_mV = peak_threshold_mV
+        self.voltage_scale_mV = voltage_scale_mV
+        self.logit_temperature_mV = logit_temperature_mV
+        self.positive_weight_cap = positive_weight_cap
+        self.event_radius_steps = event_radius_steps
+
+    def set_event_scale(self, value: float) -> None:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("event scale must be in [0,1]")
+        self.event_scale.fill_(value)
+
+    def _physical(self, values: torch.Tensor) -> torch.Tensor:
+        return values * self.state_std + self.state_mean
+
+    def forward(self, prediction: torch.Tensor, target: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if prediction.shape != target.shape:
+            raise ValueError("prediction and target shapes differ")
+        global_loss = F.mse_loss(prediction, target)
+        prediction_physical, target_physical = self._physical(prediction), self._physical(target)
+        pv = prediction_physical[..., self.soma_index]
+        tv = target_physical[..., self.soma_index]
+
+        spike_level = (tv >= self.spike_threshold_mV).to(tv.dtype)
+        positives = spike_level.sum()
+        negatives = spike_level.numel() - positives
+        positive_weight = torch.where(
+            positives > 0,
+            (negatives / positives.clamp_min(1.0)).clamp(1.0, self.positive_weight_cap),
+            positives.new_tensor(1.0),
+        ).detach()
+        spike_logits = (pv - self.spike_threshold_mV) / self.logit_temperature_mV
+        spike_loss = F.binary_cross_entropy_with_logits(
+            spike_logits,
+            spike_level,
+            pos_weight=positive_weight,
+        )
+
+        peak_mask = (tv >= self.peak_threshold_mV).to(tv.dtype)
+        peak_denominator = peak_mask.sum().clamp_min(1.0)
+        peak_deficit = torch.relu(tv - pv) / self.voltage_scale_mV
+        peak_under = (peak_deficit.square() * peak_mask).sum() / peak_denominator
+
+        crossing = torch.zeros_like(tv)
+        crossing[..., 1:] = (
+            (tv[..., :-1] < self.spike_threshold_mV)
+            & (tv[..., 1:] >= self.spike_threshold_mV)
+        ).to(tv.dtype)
+        radius = self.event_radius_steps
+        event_mask = F.max_pool1d(
+            crossing.unsqueeze(1), 2 * radius + 1, stride=1, padding=radius
+        ).squeeze(1)
+        event_denominator = event_mask.sum().clamp_min(1.0)
+        prediction_derivative = (pv[..., 1:] - pv[..., :-1]) / self.voltage_scale_mV
+        target_derivative = (tv[..., 1:] - tv[..., :-1]) / self.voltage_scale_mV
+        derivative_mask = event_mask[..., 1:]
+        derivative_loss = (
+            (prediction_derivative - target_derivative).square() * derivative_mask
+        ).sum() / derivative_mask.sum().clamp_min(1.0)
+
+        if self.rapid_gate_indices:
+            indices = torch.as_tensor(self.rapid_gate_indices, device=prediction.device)
+            gate_error = (
+                prediction.index_select(-1, indices) - target.index_select(-1, indices)
+            ).square().mean(-1)
+            rapid_gate = (gate_error * event_mask).sum() / event_denominator
+        else:
+            rapid_gate = global_loss.new_zeros(())
+
+        rare_event_loss = (
+            self.peak_under_weight * peak_under
+            + self.derivative_weight * derivative_loss
+            + self.rapid_gate_weight * rapid_gate
+            + self.spike_weight * spike_loss
+        )
+        total = self.global_weight * global_loss + self.event_scale * rare_event_loss
+        terms = {
+            "global": global_loss,
+            "peak_under": peak_under,
+            "derivative": derivative_loss,
+            "rapid_gate": rapid_gate,
+            "weighted_spike": spike_loss,
+            "rare_event": rare_event_loss,
+            "event_scale": self.event_scale.clone(),
+            "positive_weight": positive_weight,
+        }
+        return total, terms
+
+
 @torch.no_grad()
 def replay_gru_gates(model: nn.Module, inputs: torch.Tensor, hidden: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
     """Expose standard PyTorch GRU gates and verifyable hidden trajectories."""

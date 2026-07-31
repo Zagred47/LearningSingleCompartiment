@@ -60,3 +60,20 @@ precision/recall esatte e RMSE somatico per ogni classe. I checkpoint includono
 pesi, normalizzazione, ordine degli stati/input, configurazione, hash del
 dataset e catalogo degli eventi. Gli archivi delle predizioni permettono una
 valutazione successiva con tolleranze temporali diverse senza riaddestrare.
+
+## Fine-tuning conservativo dopo l'ablation della loss
+
+Il primo training event-aware da inizializzazione casuale ha peggiorato MSE e
+subthreshold senza produrre spike. L'esperimento successivo non sostituisce
+quindi la MSE e non riparte da zero. `kaggle_micro_spike_finetune_03.ipynb`
+parte dal checkpoint GRU-MSE e usa un curriculum lineare con:
+
+- MSE globale sui 61 stati sempre a peso uno;
+- deficit di voltaggio asimmetrico soltanto quando il teacher è nel picco;
+- errore di derivata nelle finestre di attraversamento soglia;
+- errore dei gate somatici rapidi nelle stesse finestre;
+- BCE-with-logits con peso positivo adattivo e limitato.
+
+Il learning rate è ridotto a `1e-4`. Il checkpoint `last` include modello,
+optimizer, scheduler, scaler, epoca e history; il resume è deterministico a
+livello di epoca. Il checkpoint `best` è usato per il test naturale finale.

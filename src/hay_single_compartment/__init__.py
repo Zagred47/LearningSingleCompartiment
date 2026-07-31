@@ -52,6 +52,7 @@ from .input_only import (
 )
 from .event_aware import (
     MICRO_EVENT_NAMES,
+    ConservativeSpikeFineTuneLoss,
     EventAwareStateLoss,
     MicroEventConfig,
     StratifiedWindowSampler,
@@ -110,6 +111,7 @@ __all__ = [
     "count_trainable_parameters",
     "move_hidden",
     "MICRO_EVENT_NAMES",
+    "ConservativeSpikeFineTuneLoss",
     "EventAwareStateLoss",
     "MicroEventConfig",
     "StratifiedWindowSampler",

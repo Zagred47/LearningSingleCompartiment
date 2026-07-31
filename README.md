@@ -160,6 +160,13 @@ GRU event-aware, Branch ELM, ConvGRU e ConvLSTM a circa 318 mila parametri.
 Il test naturale resta intatto; metriche separate descrivono tutte le classi
 di evento. Il contratto dettagliato è in `docs/event_aware_micro_experiment.md`.
 
+Dopo l'ablation negativa della loss event-aware da zero, usare
+`notebooks/kaggle_micro_spike_finetune_03.ipynb`. Il notebook carica la
+GRU-MSE convergente e applica un fine-tuning conservativo: la MSE sui 61 stati
+resta sempre attiva, mentre deficit di picco, derivata, gate rapidi e logit
+spike bilanciati entrano gradualmente. Salva `last` e `best` a ogni epoca e
+riprende automaticamente dopo un'interruzione Kaggle.
+
 ## API essenziale
 
 ```python

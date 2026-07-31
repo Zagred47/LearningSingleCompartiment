@@ -6,6 +6,7 @@ import torch
 
 from hay_single_compartment import (
     MICRO_STATE_NAMES,
+    ConservativeSpikeFineTuneLoss,
     EventAwareStateLoss,
     InputOnlyBranchELM,
     InputOnlyCfC,
@@ -94,6 +95,27 @@ def test_event_catalog_sampler_and_loss_cover_rare_spikes():
     value.backward()
     assert torch.isfinite(value) and prediction.grad is not None
     assert set(terms) == {"global", "event_voltage", "derivative", "rapid_gate", "soft_spike"}
+
+
+def test_conservative_spike_finetune_loss_is_amp_safe_and_curriculum_preserves_mse():
+    mean = np.zeros(len(MICRO_STATE_NAMES), dtype=np.float32)
+    std = np.ones_like(mean)
+    criterion = ConservativeSpikeFineTuneLoss(MICRO_STATE_NAMES, mean, std)
+    prediction = torch.randn(2, 24, len(MICRO_STATE_NAMES), requires_grad=True)
+    target = torch.randn_like(prediction)
+    soma = MICRO_STATE_NAMES.index("soma.v_mV")
+    target.data[..., soma] = -70.0
+    target.data[:, 12, soma] = 10.0
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        mse_only, terms = criterion(prediction, target)
+    torch.testing.assert_close(mse_only, terms["global"])
+    criterion.set_event_scale(1.0)
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        total, terms = criterion(prediction, target)
+    total.backward()
+    assert torch.isfinite(total) and torch.isfinite(prediction.grad).all()
+    assert total > terms["global"]
+    assert 1.0 <= float(terms["positive_weight"]) <= 64.0
 
 
 @pytest.mark.skipif(importlib.util.find_spec("ncps") is None, reason="optional ncps package")

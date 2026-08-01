@@ -195,6 +195,17 @@ moltiplicato da un gate causale sparso, supervisionato con focal loss.
 diagnostico controllato: confronta hidden GRU e stato fisico precedente con gli
 stessi probe, prima di introdurre eventualmente feedback autoregressivo.
 
+La nuova pipeline di scoperta riparte da
+`notebooks/kaggle_micro_failure_atlas_10.ipynb`. Non addestra nulla: ricostruisce
+la GRU input-only dal checkpoint (oppure legge le predizioni già esportate) e
+misura errori per tutti i 61 stati, compartimenti, regimi ed eventi, drift per
+orizzonte, spike timing e waveform, spazio delle fasi, recurrence, spettro e
+autocorrelazione del residuo, attivazioni e gate GRU. Produce uno ZIP piccolo e
+direttamente scaricabile. Il protocollo che governa gli esperimenti successivi
+è in `docs/research_methodology.md`; il contratto machine-readable è
+`configs/research_contract_v1.json`, mentre preregistrazioni e fonti sono in
+`research/`.
+
 ## API essenziale
 
 ```python

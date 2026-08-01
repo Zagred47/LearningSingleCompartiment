@@ -1,0 +1,50 @@
+{
+  "experiment_id": "",
+  "created_utc": "",
+  "status": "preregistered",
+  "question": "",
+  "hypothesis": "",
+  "expected_signature_if_supported": [],
+  "expected_signature_if_falsified": [],
+  "single_primary_factor": "",
+  "baseline": {
+    "name": "",
+    "checkpoint_sha256": "",
+    "parameter_count": null
+  },
+  "candidate": {
+    "name": "",
+    "source_or_standard_reference": "",
+    "parameter_count": null
+  },
+  "controlled_variables": {
+    "dataset_sha256": "",
+    "splits": "trajectory-disjoint",
+    "seeds": [],
+    "optimizer": "",
+    "learning_rate_schedule": "",
+    "batch_and_window_schedule": "",
+    "training_updates": null,
+    "normalization": "train-only"
+  },
+  "metrics": {
+    "primary": "",
+    "secondary": [],
+    "guardrails": []
+  },
+  "decision_rule": {
+    "promote": "",
+    "reject": "",
+    "inconclusive": ""
+  },
+  "post_run": {
+    "completed_utc": null,
+    "commit": null,
+    "artifact_sha256": null,
+    "result": null,
+    "decision": null,
+    "claim_supported": null,
+    "alternative_explanations": [],
+    "next_orthogonal_test": null
+  }
+}

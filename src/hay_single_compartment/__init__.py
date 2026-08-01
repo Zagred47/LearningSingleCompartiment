@@ -66,6 +66,22 @@ from .event_aware import (
     SpikeGateFocalLoss,
     WaveformConstrainedFineTuneLoss,
 )
+from .failure_atlas import (
+    FailureAtlasConfig,
+    aggregate_state_metrics,
+    build_failure_atlas,
+    checkpoint_gru_spec,
+    horizon_metrics,
+    inspect_gru_checkpoint,
+    load_dataset_context,
+    load_prediction_archive,
+    match_spikes,
+    recurrence_analysis,
+    statewise_metrics,
+    takens_delay_embedding,
+    write_activation_diagnostics,
+    write_failure_atlas,
+)
 
 __all__ = [
     "CURRENT_NAMES",
@@ -130,4 +146,18 @@ __all__ = [
     "replay_gru_gates",
     "SpikeGateFocalLoss",
     "WaveformConstrainedFineTuneLoss",
+    "FailureAtlasConfig",
+    "aggregate_state_metrics",
+    "build_failure_atlas",
+    "checkpoint_gru_spec",
+    "horizon_metrics",
+    "inspect_gru_checkpoint",
+    "load_dataset_context",
+    "load_prediction_archive",
+    "match_spikes",
+    "recurrence_analysis",
+    "statewise_metrics",
+    "takens_delay_embedding",
+    "write_activation_diagnostics",
+    "write_failure_atlas",
 ]

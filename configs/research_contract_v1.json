@@ -1,0 +1,92 @@
+{
+  "contract_version": "1.0.0",
+  "created_utc": "2026-08-02",
+  "system": {
+    "teacher": "Hay micro-neuron reduction with four compartments",
+    "dataset_expected_filename": "hay_micro_4c_event_enriched_v2.h5",
+    "dataset_schema": "1.2.0",
+    "input_semantics": "binary presynaptic events only",
+    "teacher_state_as_input": false,
+    "external_current_injection": false,
+    "target_semantics": "all 61 observable teacher states",
+    "raw_dt_ms": 0.1,
+    "network_dt_ms": 0.5,
+    "compartments": ["soma", "basal", "trunk", "tuft"],
+    "input_channels": 24,
+    "packed_input_width": 120
+  },
+  "data_policy": {
+    "canonical_dataset_is_frozen": true,
+    "runtime_sha256_required": true,
+    "split_unit": "complete trajectory",
+    "training_split": "train",
+    "selection_split": "validation",
+    "confirmatory_split": "test",
+    "test_access_policy": "Do not inspect test metrics while choosing variants; run once after a candidate and its decision rule are locked.",
+    "diagnostic_views_do_not_change_sampling": true,
+    "required_seed_repeats_for_claim": 3
+  },
+  "comparison_policy": {
+    "one_primary_hypothesis_per_experiment": true,
+    "reference_checkpoint_required": true,
+    "shared_initialization_when_structurally_possible": true,
+    "shared_windows_and_order": true,
+    "shared_optimizer_and_schedule_unless_optimizer_is_the_factor": true,
+    "parameter_budget_relative_tolerance": 0.05,
+    "training_update_budget_relative_tolerance": 0.02,
+    "report_wall_time_and_peak_memory": true,
+    "no_post_hoc_metric_switching": true
+  },
+  "metric_families": {
+    "global_state": [
+      "mean state normalized RMSE",
+      "median state normalized RMSE",
+      "RMSE and bias per state",
+      "derivative RMSE per state"
+    ],
+    "physiological_group": [
+      "voltage RMSE by compartment",
+      "calcium and declared slow-state normalized RMSE",
+      "intrinsic-gate and synaptic-state normalized RMSE"
+    ],
+    "event_conditioned": [
+      "subthreshold",
+      "near threshold",
+      "isolated spike",
+      "burst spike",
+      "rapid fire",
+      "tuft plateau",
+      "spike with tuft plateau",
+      "post-spike recovery"
+    ],
+    "spike": [
+      "precision recall F1 at a declared timing tolerance",
+      "timing bias and MAE",
+      "waveform RMSE",
+      "peak amplitude and timing error"
+    ],
+    "dynamics": [
+      "cumulative horizon error",
+      "normalized drift-threshold crossing",
+      "phase-histogram Jensen-Shannon divergence",
+      "recurrence quantification",
+      "residual spectrum and autocorrelation"
+    ],
+    "internal": [
+      "activation quantiles and near-zero fraction",
+      "GRU reset/update saturation",
+      "event-background activation separation",
+      "hidden effective rank"
+    ]
+  },
+  "promotion_rule": {
+    "primary": "The preregistered validation metric improves in median over at least three seeds.",
+    "guardrails": [
+      "No material regression in mean normalized RMSE over all 61 states.",
+      "No material regression in slow-state normalized RMSE.",
+      "No new instability in long free rollout.",
+      "Improvement is not explained only by more parameters or more optimizer updates."
+    ],
+    "claim_language": "A result supports or falsifies the tested architectural hypothesis; it does not prove a unique mechanism."
+  }
+}

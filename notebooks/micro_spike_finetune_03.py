@@ -73,7 +73,18 @@ def discover(default: Path, filename: str, *, directory: bool = False) -> Path:
         return default
     input_root = Path("/kaggle/input")
     if input_root.exists():
-        matches = [path for path in input_root.rglob(filename) if path.is_dir() == directory]
+        matches = sorted(
+            path for path in input_root.rglob(filename)
+            if path.is_dir() == directory
+        )
+        # Kaggle may append a suffix when an uploaded file name collides.
+        if not matches and not directory:
+            requested = Path(filename)
+            pattern = f"{requested.stem}*{requested.suffix}"
+            matches = sorted(
+                path for path in input_root.rglob(pattern)
+                if path.is_file()
+            )
         if matches:
             print(f"auto-discovered {filename}: {matches[0]}")
             return matches[0]

@@ -153,6 +153,124 @@ class InputOnlyConvLSTM(_CausalConvRecurrent):
         super().__init__(input_dim, state_dim, hidden_dim, conv_channels, dilations, "lstm", kernel_size, decoder_dim)
 
 
+class CausalResidualTCNAdapter(nn.Module):
+    """Standard causal dilated Conv1d stack for a sequence residual.
+
+    The final 1x1 convolution is zero-initialized, so attaching the adapter to
+    an existing surrogate preserves that surrogate exactly at initialization.
+    The cache contains only past input features and makes chunked inference
+    equivalent to a single full-sequence call.
+    """
+
+    def __init__(
+        self,
+        feature_dim: int,
+        state_dim: int,
+        channels: int = 96,
+        dilations: tuple[int, ...] = (1, 2, 4, 8),
+        kernel_size: int = 3,
+    ) -> None:
+        super().__init__()
+        if not dilations or any(dilation < 1 for dilation in dilations):
+            raise ValueError("dilations must contain positive integers")
+        if kernel_size < 2:
+            raise ValueError("kernel_size must be at least 2")
+        self.feature_dim = feature_dim
+        self.state_dim = state_dim
+        self.dilations = tuple(dilations)
+        self.kernel_size = kernel_size
+        self.receptive_field = 1 + (kernel_size - 1) * sum(self.dilations)
+        layers: list[nn.Module] = []
+        input_channels = feature_dim
+        for dilation in self.dilations:
+            layers.extend((
+                nn.Conv1d(
+                    input_channels, channels, kernel_size,
+                    dilation=dilation, padding=0,
+                ),
+                nn.SiLU(),
+            ))
+            input_channels = channels
+        self.temporal = nn.Sequential(*layers)
+        self.output = nn.Conv1d(channels, state_dim, kernel_size=1)
+        nn.init.zeros_(self.output.weight)
+        nn.init.zeros_(self.output.bias)
+
+    def forward(
+        self,
+        features: torch.Tensor,
+        cache: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        keep = self.receptive_field - 1
+        if cache is None:
+            cache = features.new_zeros(
+                features.shape[0], keep, self.feature_dim
+            )
+        if cache.shape != (features.shape[0], keep, self.feature_dim):
+            raise ValueError(
+                "adapter cache must have shape "
+                f"{(features.shape[0], keep, self.feature_dim)}, got {tuple(cache.shape)}"
+            )
+        combined = torch.cat((cache, features), dim=1)
+        residual = self.output(self.temporal(combined.transpose(1, 2)))
+        next_cache = combined[:, -keep:] if keep else combined[:, :0]
+        return residual.transpose(1, 2), next_cache
+
+
+class InputOnlyResidualTCN(nn.Module):
+    """Frozen input-only GRU plus a trainable causal TCN state residual.
+
+    The TCN receives the frozen GRU sequence and the same packed spike inputs;
+    it never receives a teacher state or a previous predicted physical state.
+    """
+
+    architecture = "frozen_gru_causal_residual_tcn_input_only"
+
+    def __init__(
+        self,
+        baseline: InputOnlyGRU,
+        input_dim: int,
+        state_dim: int,
+        channels: int = 96,
+        dilations: tuple[int, ...] = (1, 2, 4, 8),
+        kernel_size: int = 3,
+    ) -> None:
+        super().__init__()
+        self.baseline = baseline
+        for parameter in self.baseline.parameters():
+            parameter.requires_grad_(False)
+        self.adapter = CausalResidualTCNAdapter(
+            baseline.hidden_dim + input_dim,
+            state_dim,
+            channels=channels,
+            dilations=dilations,
+            kernel_size=kernel_size,
+        )
+        self.hidden_dim = baseline.hidden_dim
+        self.receptive_field = self.adapter.receptive_field
+
+    def forward(self, inputs: torch.Tensor, hidden: Any = None, timespans: torch.Tensor | None = None):
+        del timespans
+        recurrent_hidden, adapter_cache = (None, None) if hidden is None else hidden
+        encoded = self.baseline.input_encoder(inputs)
+        sequence, recurrent_hidden = self.baseline.recurrent(encoded, recurrent_hidden)
+        baseline_prediction = self.baseline.decoder(sequence)
+        residual, adapter_cache = self.adapter(
+            torch.cat((sequence, inputs), dim=-1), adapter_cache
+        )
+        return baseline_prediction + residual, (recurrent_hidden, adapter_cache)
+
+    def decode_hidden(self, hidden: Any) -> torch.Tensor:
+        return self.baseline.decode_hidden(hidden[0])
+
+    @staticmethod
+    def detach_hidden(hidden: Any) -> Any:
+        if hidden is None:
+            return None
+        recurrent_hidden, adapter_cache = hidden
+        return recurrent_hidden.detach(), adapter_cache.detach()
+
+
 class InputOnlyBranchELM(nn.Module):
     """Branch ELM port using the published GIADA recurrence and pure spike input."""
 

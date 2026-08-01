@@ -43,6 +43,7 @@ from hay_single_compartment import (
     MICRO_EVENT_NAMES,
     ConservativeSpikeFineTuneLoss,
     InputOnlyGRU,
+    InputOnlyResidualTCN,
     StratifiedWindowSampler,
     WaveformConstrainedFineTuneLoss,
     classify_micro_events,
@@ -122,14 +123,15 @@ CFG = FineTuneConfig(
 )
 if CFG.objective not in {
     "conservative_v1", "waveform_constrained_v2", "waveform_decoder_v3",
-    "phase_weighted_v4", "phase_auxiliary_v5",
+    "phase_weighted_v4", "phase_auxiliary_v5", "residual_tcn_v6",
 }:
     raise ValueError(f"unknown fine-tuning objective: {CFG.objective}")
 USES_WAVEFORM_CONSTRAINTS = CFG.objective in {
     "waveform_constrained_v2", "waveform_decoder_v3", "phase_weighted_v4",
-    "phase_auxiliary_v5",
+    "phase_auxiliary_v5", "residual_tcn_v6",
 }
 USES_AUXILIARY_PHASE = CFG.objective == "phase_auxiliary_v5"
+USES_RESIDUAL_TCN = CFG.objective == "residual_tcn_v6"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if not DATASET.exists():
     raise FileNotFoundError(f"dataset not found: {DATASET}")
@@ -206,10 +208,19 @@ def make_model() -> InputOnlyGRU:
     return model
 
 
+def make_candidate_model():
+    if USES_RESIDUAL_TCN:
+        return InputOnlyResidualTCN(
+            make_model(), input_dim, state_dim,
+            channels=96, dilations=(1, 2, 4, 8), kernel_size=3,
+        )
+    return make_model()
+
+
 baseline_model = make_model().to(DEVICE).eval()
 for parameter in baseline_model.parameters():
     parameter.requires_grad_(False)
-finetune_model = make_model()
+finetune_model = make_candidate_model()
 if CFG.objective == "waveform_decoder_v3":
     for parameter in finetune_model.input_encoder.parameters():
         parameter.requires_grad_(False)
@@ -241,7 +252,11 @@ def tensor(values, indices=None):
 
 
 def detach(hidden):
-    return None if hidden is None else hidden.detach()
+    if hidden is None:
+        return None
+    if isinstance(hidden, tuple):
+        return tuple(detach(value) for value in hidden)
+    return hidden.detach()
 
 
 def context_for_window(trajectory: int, start: int) -> np.ndarray:
@@ -262,7 +277,7 @@ def event_scale(epoch: int) -> float:
     return float(np.clip((epoch - 1) / (CFG.curriculum_epochs - 1), 0.0, 1.0))
 
 
-if CFG.objective == "phase_auxiliary_v5":
+if CFG.objective in {"phase_auxiliary_v5", "residual_tcn_v6"}:
     criterion = WaveformConstrainedFineTuneLoss(
         state_names,
         state_mean,
@@ -431,6 +446,7 @@ RUN_NAME = {
     "waveform_decoder_v3": "gru_decoder_waveform_finetune",
     "phase_weighted_v4": "gru_phase_weighted_finetune",
     "phase_auxiliary_v5": "gru_phase_auxiliary_finetune",
+    "residual_tcn_v6": "gru_residual_tcn_finetune",
 }[CFG.objective]
 LAST_CHECKPOINT = CHECKPOINTS / f"{RUN_NAME}_last.pt"
 BEST_CHECKPOINT = CHECKPOINTS / f"{RUN_NAME}_best.pt"
@@ -489,6 +505,8 @@ def save_best(model, epoch, score, admissible):
         "epoch": epoch,
         "admissible": admissible,
         "validation_limits": validation_limits,
+        "architecture": getattr(model, "architecture", model.__class__.__name__),
+        "receptive_field_steps": getattr(model, "receptive_field", 1),
     }
     if auxiliary_head is not None:
         payload["auxiliary_head_state_dict"] = auxiliary_head.state_dict()
@@ -516,7 +534,10 @@ if LAST_CHECKPOINT.exists() and os.environ.get("HAY_FINETUNE_FORCE_RESTART", "0"
         print(f"resume fine-tuning from completed epoch {start_epoch - 1}")
 
 if USES_WAVEFORM_CONSTRAINTS and not resumed:
-    save_best(baseline_model, 0, best_score, True)
+    # The residual TCN is exactly the baseline at initialization because its
+    # final projection is zero.  Saving the candidate also preserves its
+    # architecture in the epoch-0 fallback checkpoint.
+    save_best(finetune_model, 0, best_score, True)
 
 def make_sampler(epoch: int) -> StratifiedWindowSampler:
     return StratifiedWindowSampler(
@@ -533,7 +554,7 @@ def make_sampler(epoch: int) -> StratifiedWindowSampler:
         seed=CFG.seed + epoch,
     )
 started = time.perf_counter()
-epoch_bar = tqdm(range(start_epoch, CFG.epochs + 1), desc="fine-tune GRU spike")
+epoch_bar = tqdm(range(start_epoch, CFG.epochs + 1), desc=f"train {RUN_NAME}")
 for epoch in epoch_bar:
     finetune_model.train()
     scale = event_scale(epoch)
@@ -671,7 +692,7 @@ if auxiliary_head is not None and "auxiliary_head_state_dict" in best_payload:
 baseline_model = baseline_model.to(DEVICE).eval()
 finetune_model.eval()
 last_payload = torch.load(LAST_CHECKPOINT, map_location=DEVICE, weights_only=False)
-last_model = make_model().to(DEVICE)
+last_model = make_candidate_model().to(DEVICE)
 last_model.load_state_dict(last_payload["model_state_dict"])
 last_model.eval()
 
@@ -835,9 +856,9 @@ waveform_terms = [
     "symmetric soft threshold occupancy",
     "frozen-baseline functional distillation outside spike windows",
 ]
-if CFG.objective in {"phase_weighted_v4", "phase_auxiliary_v5"}:
+if CFG.objective in {"phase_weighted_v4", "phase_auxiliary_v5", "residual_tcn_v6"}:
     waveform_terms.append("teacher-derived spike-core and slope importance weighting")
-if CFG.objective == "phase_auxiliary_v5":
+if CFG.objective in {"phase_auxiliary_v5", "residual_tcn_v6"}:
     waveform_terms.append("explicit physical soma distillation outside spike windows")
 loss_description = (
     {
@@ -872,6 +893,9 @@ loss_description = (
     "model_parameters": MODEL_PARAMETERS,
     "trainable_model_parameters": TRAINABLE_PARAMETERS,
     "training_only_auxiliary_parameters": AUXILIARY_PARAMETERS,
+    "architecture": getattr(finetune_model, "architecture", finetune_model.__class__.__name__),
+    "receptive_field_steps": getattr(finetune_model, "receptive_field", 1),
+    "receptive_field_ms": getattr(finetune_model, "receptive_field", 1) * MODEL_DT_MS,
     "config": asdict(CFG),
     "baseline_validation": baseline_validation,
     "selected_epoch": int(best_payload.get("epoch", -1)),

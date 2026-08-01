@@ -87,7 +87,7 @@ Pointwise MLP and causal linear probes using 1--8 ms of hidden-state history did
 not improve exact occupancy average precision.  The latent therefore identifies
 the slow spike regime well but does not linearly encode the exact rapid phase.
 
-## Iteration 05: auxiliary phase supervision (Kaggle candidate)
+## Iteration 05: auxiliary phase supervision (rejected)
 
 The GRU, input contract and 61-state decoder remain unchanged at inference.  A
 training-only standard linear auxiliary head is attached to the recurrent
@@ -99,3 +99,40 @@ The physical objective retains symmetric waveform/derivative matching and adds
 an explicit soma-voltage distillation term outside spike windows.  The auxiliary
 head is saved for audit but is not required for inference.  Checkpoint admission
 still uses only physical rollout metrics and the original hard constraints.
+
+Held-out evidence shows that the auxiliary task itself was learned, but did not
+produce the required physical waveform:
+
+- auxiliary occupancy BCE fell from about `0.726` to `0.158`;
+- the selected checkpoint remained epoch 0 (the unchanged GRU-MSE);
+- the last candidate produced only 5 predicted crossings for 136 teacher spikes,
+  with precision `0.20`, recall `0.007` and F1 `0.014`;
+- soma RMSE rose from `3.566` to `6.286 mV`, while subthreshold RMSE rose from
+  `1.076` to `2.528 mV`;
+- the prediction formed a broad depolarized hump instead of narrow rapid phases.
+
+This falsifies the hypothesis that stronger pointwise/deep supervision alone is
+enough.  The frozen GRU latent identifies a spike regime, but its shared
+recurrent/pointwise decoding path does not express the required fast phase.
+
+## Iteration 06: frozen GRU plus causal residual TCN (Kaggle candidate)
+
+The next experiment changes one architectural assumption while preserving the
+input contract and the complete 61-state target:
+
+- the converged GRU-MSE is fully frozen;
+- a standard causal dilated Conv1d stack receives the frozen GRU sequence plus
+  the same packed spike inputs;
+- dilations `(1, 2, 4, 8)` and kernel size 3 give a 31-step (`15.5 ms`)
+  receptive field;
+- a zero-initialized 1x1 projection predicts a residual for every one of the 61
+  states, so epoch 0 is exactly GRU-MSE;
+- only the residual adapter is optimized; no teacher or physical predicted state
+  is fed back, and the auxiliary classifier is removed to isolate the temporal
+  architecture hypothesis.
+
+The same physical waveform objective, checkpoint constraints, selected-versus-
+last audit and individual/slow-state audit remain in force.  A positive result
+would support the abstract claim that the system contains a fast, finite-memory
+correction superimposed on slower recurrent dynamics.  A rejected result would
+falsify that specific decomposition without damaging the baseline checkpoint.

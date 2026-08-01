@@ -174,6 +174,13 @@ epoche di sola MSE, poi la stessa loss conservativa entra con curriculum. Il
 notebook richiede l'HDF5 già montato e si arresta se non lo trova: non avvia
 silenziosamente una nuova generazione.
 
+Dopo l'esito negativo della supervisione ausiliaria di fase, usare
+`notebooks/kaggle_micro_residual_tcn_finetune_06.ipynb`. La GRU-MSE viene
+congelata e un adattatore TCN causale a dilatazioni `(1, 2, 4, 8)` apprende un
+residuo sui 61 stati da hidden GRU e spike input. La proiezione finale parte da
+zero, quindi l'epoca 0 coincide esattamente con il baseline; dataset e checkpoint
+esistenti vengono scoperti automaticamente negli input Kaggle.
+
 ## API essenziale
 
 ```python

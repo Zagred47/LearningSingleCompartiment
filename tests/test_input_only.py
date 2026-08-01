@@ -15,11 +15,57 @@ from hay_single_compartment import (
     InputOnlyConvGRU,
     InputOnlyConvLSTM,
     InputOnlyGRU,
+    InputOnlyResidualTCN,
     MicroEventConfig,
     StratifiedWindowSampler,
     classify_micro_events,
     replay_gru_gates,
 )
+
+
+def test_residual_tcn_starts_as_exact_frozen_gru_and_is_chunk_equivalent():
+    torch.manual_seed(2)
+    baseline = InputOnlyGRU(input_dim=12, state_dim=61, hidden_dim=10)
+    model = InputOnlyResidualTCN(
+        baseline, input_dim=12, state_dim=61, channels=8, dilations=(1, 2)
+    )
+    inputs = torch.randn(2, 13, 12)
+    expected, _ = baseline(inputs)
+    full, _ = model(inputs)
+    torch.testing.assert_close(full, expected)
+    assert all(not parameter.requires_grad for parameter in model.baseline.parameters())
+    assert any(parameter.requires_grad for parameter in model.adapter.parameters())
+
+    with torch.no_grad():
+        model.adapter.output.weight.normal_(std=0.05)
+    full, full_hidden = model(inputs)
+    first, hidden = model(inputs[:, :5])
+    second, chunk_hidden = model(inputs[:, 5:], hidden)
+    torch.testing.assert_close(
+        torch.cat((first, second), dim=1), full, atol=2e-6, rtol=2e-6
+    )
+    torch.testing.assert_close(
+        model.decode_hidden(chunk_hidden), model.decode_hidden(full_hidden)
+    )
+
+
+def test_residual_tcn_is_strictly_causal():
+    torch.manual_seed(7)
+    model = InputOnlyResidualTCN(
+        InputOnlyGRU(6, 4, hidden_dim=5),
+        input_dim=6,
+        state_dim=4,
+        channels=7,
+        dilations=(1, 2),
+    )
+    with torch.no_grad():
+        model.adapter.output.weight.normal_(std=0.1)
+    inputs = torch.randn(1, 12, 6)
+    changed_future = inputs.clone()
+    changed_future[:, 7:] = torch.randn_like(changed_future[:, 7:]) * 10
+    original, _ = model(inputs)
+    changed, _ = model(changed_future)
+    torch.testing.assert_close(original[:, :7], changed[:, :7], atol=2e-6, rtol=2e-6)
 
 
 def test_input_only_gru_carries_hidden_without_teacher_state():

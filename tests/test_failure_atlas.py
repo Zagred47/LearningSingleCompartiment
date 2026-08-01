@@ -12,6 +12,7 @@ from hay_single_compartment import (
     checkpoint_gru_spec,
     load_dataset_context,
     load_prediction_archive,
+    teacher_centered_waveform_metrics,
 )
 
 
@@ -100,3 +101,15 @@ def test_dataset_context_reads_schema_and_resamples(tmp_path):
     assert context["model"] == "hay_micro_4c"
     assert context["model_dt_ms"] == 0.2
     assert context["spikes"].shape == (2, 10)
+
+
+def test_teacher_centered_waveform_measures_completely_missed_spike():
+    truth = np.full((1, 80), -70.0)
+    truth[0, 38:43] = np.asarray([-35.0, -10.0, 35.0, -5.0, -45.0])
+    prediction = np.full_like(truth, -68.0)
+    report = teacher_centered_waveform_metrics(
+        truth, prediction, dt_ms=0.5, before_ms=2.0, after_ms=3.0
+    )
+    assert report["teacher_spike_windows"] == 1
+    assert report["predicted_peak_above_threshold_fraction"] == 0.0
+    assert report["peak_amplitude_bias_mV"] < -90.0

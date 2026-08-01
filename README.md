@@ -206,6 +206,14 @@ direttamente scaricabile. Il protocollo che governa gli esperimenti successivi
 `configs/research_contract_v1.json`, mentre preregistrazioni e fonti sono in
 `research/`.
 
+Il primo training guidato dall'Atlas è
+`notebooks/kaggle_micro_orthogonal_factorial_11.ipynb`. Addestra da zero un
+factorial controllato `GRU/CausalConv1d+GRU x MSE/MSE+MR-STFT`, seleziona
+soltanto su validation e mantiene il test chiuso. Tutte le celle condividono
+ordine dei dati, finestre, budget massimo, stopping policy e budget di parametri; ogni epoca salva
+checkpoint `last` e il migliore secondo il soma RMSE sugli eventi. I risultati
+FA-00 che motivano il confronto sono in `docs/failure_atlas_10_findings.md`.
+
 ## API essenziale
 
 ```python

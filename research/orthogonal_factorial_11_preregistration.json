@@ -1,0 +1,77 @@
+{
+  "experiment": "orthogonal_factorial_11",
+  "status": "preregistered_single_seed_preflight",
+  "registered_utc": "2026-08-02",
+  "question": "Is the missed-spike failure caused by an objective that underweights broadband transients, by insufficient local temporal bandwidth in the scaffold, or by their interaction?",
+  "diagnostic_evidence_frozen_before_training": {
+    "source": "hay_micro_failure_atlas_10",
+    "split": "validation",
+    "teacher_spikes": 102,
+    "predicted_spikes": 0,
+    "predicted_to_teacher_power_ratio_10_50_hz": 0.499,
+    "predicted_to_teacher_power_ratio_50_200_hz": 0.01233,
+    "predicted_to_teacher_power_ratio_200_1000_hz": 0.001844,
+    "interpretation": "The existing GRU is accurate in subthreshold and synaptic regimes but behaves like a conditional low-pass estimator around fast voltage events."
+  },
+  "design": {
+    "type": "two_by_two_factorial",
+    "architecture_factor": [
+      "standard_gru",
+      "causal_dilated_conv1d_then_standard_gru"
+    ],
+    "objective_factor": [
+      "normalized_state_mse",
+      "normalized_state_mse_plus_multi_resolution_stft"
+    ],
+    "cells": [
+      "gru_mse",
+      "gru_mrstft",
+      "causal_conv_gru_mse",
+      "causal_conv_gru_mrstft"
+    ],
+    "training": "from_scratch",
+    "shared_controls": [
+      "frozen dataset SHA-256",
+      "same train and validation trajectory splits",
+      "same seed and data order",
+      "same optimizer, learning rate, maximum update budget and stopping policy",
+      "parameter counts reported for every cell"
+    ]
+  },
+  "hypotheses": {
+    "LO-01": "MR-STFT improves rare fast-event fidelity because global pointwise MSE underweights broadband transients.",
+    "SC-01": "A 7.5 ms causal dilated frontend improves fast-event fidelity by exposing local multiscale patterns before recurrence.",
+    "INT-01": "The convolutional frontend is most useful when the objective explicitly rewards broadband fidelity."
+  },
+  "selection": {
+    "split": "validation",
+    "primary_metric": "event_soma_rmse_mV",
+    "lower_is_better": true,
+    "event_set": [
+      "isolated_spike",
+      "burst_spike",
+      "rapid_fire",
+      "tuft_plateau",
+      "spike_with_tuft_plateau"
+    ],
+    "guardrails_relative_to_gru_mse": {
+      "global_mean_normalized_rmse_max_ratio": 1.10,
+      "slow_state_mean_normalized_rmse_max_ratio": 1.10,
+      "subthreshold_soma_rmse_mV_max_ratio": 1.25
+    },
+    "preflight_promotion_rule": "At least 15% lower primary metric while satisfying every guardrail.",
+    "claim_rule": "A promoted contrast must be repeated over at least three seeds before any confirmatory test-set evaluation or mechanistic claim."
+  },
+  "contrasts": {
+    "objective_main_effect": "mean(MRSTFT cells) minus mean(MSE cells)",
+    "architecture_main_effect": "mean(causal-conv cells) minus mean(GRU cells)",
+    "interaction": "(causal_conv_gru_mrstft - causal_conv_gru_mse) - (gru_mrstft - gru_mse)"
+  },
+  "test_policy": "The test split remains unopened in this notebook. It is reserved for one confirmatory evaluation after candidate, seeds and decision rule are locked.",
+  "literature_evidence_ids": [
+    "MRSTFT-2019",
+    "STFT-2018",
+    "WN-2016",
+    "GRU-2014"
+  ]
+}

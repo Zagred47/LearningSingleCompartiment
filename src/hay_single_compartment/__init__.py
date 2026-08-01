@@ -79,9 +79,11 @@ from .failure_atlas import (
     recurrence_analysis,
     statewise_metrics,
     takens_delay_embedding,
+    teacher_centered_waveform_metrics,
     write_activation_diagnostics,
     write_failure_atlas,
 )
+from .spectral_loss import MultiResolutionSTFTLoss, StateMSEMultiResolutionSTFTLoss
 
 __all__ = [
     "CURRENT_NAMES",
@@ -158,6 +160,9 @@ __all__ = [
     "recurrence_analysis",
     "statewise_metrics",
     "takens_delay_embedding",
+    "teacher_centered_waveform_metrics",
     "write_activation_diagnostics",
     "write_failure_atlas",
+    "MultiResolutionSTFTLoss",
+    "StateMSEMultiResolutionSTFTLoss",
 ]

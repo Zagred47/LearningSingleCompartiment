@@ -253,6 +253,56 @@ def spike_waveform_metrics(
     }
 
 
+def teacher_centered_waveform_metrics(
+    truth_voltage: np.ndarray,
+    prediction_voltage: np.ndarray,
+    dt_ms: float,
+    threshold_mV: float = -20.0,
+    before_ms: float = 5.0,
+    after_ms: float = 12.0,
+) -> dict[str, Any]:
+    """Compare both traces around every teacher spike, including misses.
+
+    Matched-spike metrics become empty when a model predicts no threshold
+    crossings.  Teacher-centred windows keep the amplitude and waveform
+    failure measurable in exactly that case.
+    """
+
+    truth_voltage = np.asarray(truth_voltage, dtype=np.float64)
+    prediction_voltage = np.asarray(prediction_voltage, dtype=np.float64)
+    if truth_voltage.shape != prediction_voltage.shape or truth_voltage.ndim != 2:
+        raise ValueError("voltage traces must have matching [trajectory,time] shapes")
+    before = max(1, int(round(before_ms / dt_ms)))
+    after = max(1, int(round(after_ms / dt_ms)))
+    crossings = _crossings(truth_voltage, threshold_mV)
+    truth_windows, prediction_windows = [], []
+    for trajectory in range(truth_voltage.shape[0]):
+        for crossing in np.flatnonzero(crossings[trajectory]):
+            center = int(crossing + 1)
+            if center < before or center + after >= truth_voltage.shape[1]:
+                continue
+            truth_windows.append(truth_voltage[trajectory, center - before : center + after + 1])
+            prediction_windows.append(prediction_voltage[trajectory, center - before : center + after + 1])
+    if not truth_windows:
+        return {"teacher_spike_windows": 0}
+    truth_array = np.asarray(truth_windows)
+    prediction_array = np.asarray(prediction_windows)
+    truth_peaks = truth_array.max(axis=1)
+    predicted_peaks = prediction_array.max(axis=1)
+    return {
+        "teacher_spike_windows": int(len(truth_array)),
+        "waveform_rmse_mV": float(np.sqrt(np.mean(np.square(prediction_array - truth_array)))),
+        "peak_amplitude_bias_mV": float(np.mean(predicted_peaks - truth_peaks)),
+        "peak_amplitude_mae_mV": float(np.mean(np.abs(predicted_peaks - truth_peaks))),
+        "mean_truth_peak_mV": float(np.mean(truth_peaks)),
+        "mean_prediction_peak_mV": float(np.mean(predicted_peaks)),
+        "predicted_peak_above_threshold_fraction": float(np.mean(predicted_peaks >= threshold_mV)),
+        "mean_truth_waveform_mV": truth_array.mean(0).tolist(),
+        "mean_prediction_waveform_mV": prediction_array.mean(0).tolist(),
+        "waveform_time_ms": (np.arange(-before, after + 1) * dt_ms).tolist(),
+    }
+
+
 def masked_metrics(
     truth: np.ndarray,
     prediction: np.ndarray,
@@ -654,6 +704,10 @@ def build_failure_atlas(
         truth[..., soma_index], prediction[..., soma_index], pairs, dt_ms,
         config.waveform_before_ms, config.waveform_after_ms,
     )
+    teacher_centered_waveform = teacher_centered_waveform_metrics(
+        truth[..., soma_index], prediction[..., soma_index], dt_ms,
+        config.spike_threshold_mV, config.waveform_before_ms, config.waveform_after_ms,
+    )
     event_rows = masked_metrics(truth, prediction, event_masks, event_names, state_names)
     regime_rows: list[dict[str, Any]] = []
     if regimes is not None and regime_names:
@@ -729,6 +783,7 @@ def build_failure_atlas(
         },
         "spikes": spike,
         "waveform": waveform,
+        "teacher_centered_waveform": teacher_centered_waveform,
         "phase_space": phase_pairs,
         "takens": takens,
         "recurrence": recurrence,
@@ -843,6 +898,29 @@ def write_failure_atlas(
         axis.grid(axis="y", alpha=0.25)
         figure.tight_layout()
         figure.savefig(output / "event_soma_rmse.png", dpi=170)
+        plt.close(figure)
+
+    teacher_waveform = report.get("teacher_centered_waveform", {})
+    if teacher_waveform.get("teacher_spike_windows", 0):
+        figure, axis = plt.subplots(figsize=(10, 5))
+        axis.plot(
+            teacher_waveform["waveform_time_ms"],
+            teacher_waveform["mean_truth_waveform_mV"],
+            label="teacher",
+        )
+        axis.plot(
+            teacher_waveform["waveform_time_ms"],
+            teacher_waveform["mean_prediction_waveform_mV"],
+            label=model_name,
+        )
+        axis.axhline(report["spikes"]["threshold_mV"], color="black", linestyle="--", alpha=0.5)
+        axis.set_xlabel("time from teacher spike (ms)")
+        axis.set_ylabel("soma V (mV)")
+        axis.set_title("Teacher-centred spike waveform (includes missed spikes)")
+        axis.grid(alpha=0.25)
+        axis.legend()
+        figure.tight_layout()
+        figure.savefig(output / "teacher_centered_spike_waveform.png", dpi=170)
         plt.close(figure)
 
     soma = list(state_names).index("soma.v_mV")

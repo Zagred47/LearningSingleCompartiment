@@ -189,8 +189,15 @@ train_y_n = (train_y - state_mean) / state_std
 val_y_n = (val_y - state_mean) / state_std
 test_y_n = (test_y - state_mean) / state_std
 MODEL_DT_MS = raw_dt_ms * temporal_bin
+SLOW_STATE_INDICES = tuple(
+    index for index, name in enumerate(state_names)
+    if any(token in name for token in (
+        "ca_i_mM", "m_Ih", "m_Im", "z_SK_E2", "nmda_decay"
+    ))
+)
 print("train:", train_x.shape, "validation:", val_x.shape, "test:", test_x.shape)
 print("model dt:", MODEL_DT_MS, "ms | states:", len(state_names))
+print("slow-state audit:", [state_names[index] for index in SLOW_STATE_INDICES])
 
 
 def make_model() -> InputOnlyGRU:
@@ -348,6 +355,8 @@ def validation_metrics(model):
     criterion.set_event_scale(1.0)
     totals, elements = {}, 0
     soma_squared, soma_elements = 0.0, 0
+    state_squared = np.zeros(len(state_names), dtype=np.float64)
+    state_elements = 0
     subthreshold_squared, subthreshold_elements = 0.0, 0
     truth_above_steps = predicted_above_steps = 0
     truth_crossings = predicted_crossings = 0
@@ -383,6 +392,10 @@ def validation_metrics(model):
             pv = prediction[..., soma_index] * float(state_std[soma_index]) + float(state_mean[soma_index])
             tv = target[..., soma_index] * float(state_std[soma_index]) + float(state_mean[soma_index])
             squared = (pv - tv).square()
+            state_squared += (
+                (prediction - target).square().sum(dim=(0, 1)).cpu().numpy()
+            )
+            state_elements += target.shape[0] * target.shape[1]
             soma_squared += float(squared.sum())
             soma_elements += squared.numel()
             subthreshold = tv < -35.0
@@ -395,6 +408,7 @@ def validation_metrics(model):
             hidden = detach(hidden)
             reference_hidden = detach(reference_hidden)
     metrics = {key: value / elements for key, value in totals.items()}
+    state_rmse = np.sqrt(state_squared / max(1, state_elements))
     metrics.update({
         "soma_rmse_mV": float(np.sqrt(soma_squared / max(1, soma_elements))),
         "subthreshold_rmse_mV": float(np.sqrt(subthreshold_squared / max(1, subthreshold_elements))),
@@ -402,6 +416,11 @@ def validation_metrics(model):
         "predicted_above_steps": predicted_above_steps,
         "truth_crossings": truth_crossings,
         "predicted_crossings": predicted_crossings,
+        "mean_state_normalized_rmse": float(state_rmse.mean()),
+        "slow_state_mean_normalized_rmse": float(
+            state_rmse[list(SLOW_STATE_INDICES)].mean()
+        ),
+        "worst_state_normalized_rmse": float(state_rmse.max()),
     })
     return metrics
 
@@ -446,6 +465,12 @@ validation_limits = {
     "subthreshold_rmse_mV": baseline_validation["subthreshold_rmse_mV"] * 1.10,
     "predicted_above_steps": max(1, baseline_validation["truth_above_steps"] * 2),
     "predicted_crossings": max(1, int(np.ceil(baseline_validation["truth_crossings"] * 1.5))),
+    "mean_state_normalized_rmse": (
+        baseline_validation["mean_state_normalized_rmse"] * 1.05
+    ),
+    "slow_state_mean_normalized_rmse": (
+        baseline_validation["slow_state_mean_normalized_rmse"] * 1.05
+    ),
 }
 
 
@@ -588,6 +613,10 @@ for epoch in epoch_bar:
             and validation["subthreshold_rmse_mV"] <= validation_limits["subthreshold_rmse_mV"]
             and validation["predicted_above_steps"] <= validation_limits["predicted_above_steps"]
             and validation["predicted_crossings"] <= validation_limits["predicted_crossings"]
+            and validation["mean_state_normalized_rmse"]
+                <= validation_limits["mean_state_normalized_rmse"]
+            and validation["slow_state_mean_normalized_rmse"]
+                <= validation_limits["slow_state_mean_normalized_rmse"]
         )
     elapsed = time.perf_counter() - started
     eta = elapsed / max(1, epoch - start_epoch + 1) * (CFG.epochs - epoch)
@@ -697,6 +726,10 @@ def match_spikes(truth_voltage, prediction_voltage, threshold=-20.0, tolerance_s
 
 
 truth = test_y[:, 1:]
+truth_time_above_threshold_s = float(
+    np.sum(truth[..., state_names.index("soma.v_mV")] >= -20.0)
+    * MODEL_DT_MS / 1000.0
+)
 predictions = {
     "gru_mse": predict(baseline_model),
     RUN_NAME: predict(finetune_model),
@@ -718,6 +751,7 @@ for name, prediction in predictions.items():
         "time_above_threshold_s": float(
             np.sum(prediction[..., soma_index] >= -20.0) * MODEL_DT_MS / 1000.0
         ),
+        "truth_time_above_threshold_s": truth_time_above_threshold_s,
         "selected_epoch": (
             0 if name == "gru_mse"
             else last_epoch if name.endswith("_last_rejected")
@@ -745,6 +779,30 @@ for name, prediction in predictions.items():
 comparison = pd.DataFrame(rows)
 comparison.to_csv(OUTPUT / "comparison.csv", index=False)
 print(comparison.T)
+
+baseline_error = predictions["gru_mse"] - truth
+baseline_state_rmse = np.sqrt(np.mean(np.square(baseline_error), axis=(0, 1)))
+statewise_rows = []
+for state_index, state_name in enumerate(state_names):
+    row = {
+        "state": state_name,
+        "is_slow_state": state_index in SLOW_STATE_INDICES,
+        "state_std": float(state_std[state_index]),
+    }
+    baseline_normalized = baseline_state_rmse[state_index] / state_std[state_index]
+    for name, prediction in predictions.items():
+        rmse = float(np.sqrt(np.mean(np.square(
+            prediction[..., state_index] - truth[..., state_index]
+        ))))
+        normalized = rmse / float(state_std[state_index])
+        row[f"{name}_rmse"] = rmse
+        row[f"{name}_normalized_rmse"] = normalized
+        row[f"{name}_normalized_ratio_vs_gru_mse"] = (
+            normalized / max(float(baseline_normalized), 1e-12)
+        )
+    statewise_rows.append(row)
+statewise = pd.DataFrame(statewise_rows)
+statewise.to_csv(OUTPUT / "statewise_rmse.csv", index=False)
 
 trajectory = int(np.argmax(test_events[..., 2:5].sum(axis=(1, 2))))
 steps = min(test_x.shape[1], int(round(1000.0 / MODEL_DT_MS)))

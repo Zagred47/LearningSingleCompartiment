@@ -10,10 +10,15 @@ rejects candidates that violate any of these constraints relative to GRU-MSE:
 - subthreshold soma RMSE: at most `+10%`;
 - samples above -20 mV: at most `2x` the teacher count;
 - upward -20 mV crossings: at most `1.5x` the teacher count.
+- mean normalized RMSE across the 61 individual states: at most `+5%`;
+- mean normalized RMSE of slow calcium, Ih, Im, SK and NMDA-decay states:
+  at most `+5%`.
 
 The baseline checkpoint is always retained as epoch 0.  If no trained epoch is
 both admissible and better on the complete validation objective, the experiment
 returns the baseline rather than presenting a degraded model as an improvement.
+The final archive also contains `statewise_rmse.csv`, so individual-state
+degradation remains visible even when group means pass.
 
 ## Iteration 03: conservative rare-event objective (rejected)
 

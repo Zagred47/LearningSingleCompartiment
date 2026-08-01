@@ -646,6 +646,88 @@ class AuxiliarySpikePhaseLoss(nn.Module):
         }
 
 
+class SpikeGateFocalLoss(nn.Module):
+    """Class-balanced focal supervision for a sparse fast-expert gate.
+
+    The target is a short dilation of the teacher spike core.  Positive and
+    negative focal losses are averaged separately, so natural class imbalance
+    cannot be solved by keeping the gate permanently closed or broadly open.
+    """
+
+    def __init__(
+        self,
+        state_names: Sequence[str],
+        state_mean: np.ndarray | torch.Tensor,
+        state_std: np.ndarray | torch.Tensor,
+        *,
+        core_threshold_mV: float = -35.0,
+        support_radius_steps: int = 2,
+        gamma: float = 2.0,
+        positive_fraction: float = 0.75,
+    ) -> None:
+        super().__init__()
+        if support_radius_steps < 0:
+            raise ValueError("support_radius_steps must be nonnegative")
+        if gamma < 0.0 or not 0.0 < positive_fraction < 1.0:
+            raise ValueError("invalid focal-loss configuration")
+        self.soma_index = list(state_names).index("soma.v_mV")
+        self.register_buffer("state_mean", torch.as_tensor(state_mean, dtype=torch.float32))
+        self.register_buffer("state_std", torch.as_tensor(state_std, dtype=torch.float32))
+        self.core_threshold_mV = core_threshold_mV
+        self.support_radius_steps = support_radius_steps
+        self.gamma = gamma
+        self.positive_fraction = positive_fraction
+
+    def target(self, states: torch.Tensor) -> torch.Tensor:
+        voltage = (
+            states[..., self.soma_index] * self.state_std[self.soma_index]
+            + self.state_mean[self.soma_index]
+        )
+        core = (voltage >= self.core_threshold_mV).to(states.dtype)
+        if self.support_radius_steps:
+            radius = self.support_radius_steps
+            core = F.max_pool1d(
+                core.unsqueeze(1), 2 * radius + 1, stride=1, padding=radius
+            ).squeeze(1)
+        return core
+
+    def forward(
+        self, gate_logits: torch.Tensor, states: torch.Tensor
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if gate_logits.shape != states.shape[:-1] + (1,):
+            raise ValueError("gate logits must have shape [batch,time,1]")
+        labels = self.target(states)
+        logits = gate_logits.squeeze(-1)
+        probabilities = torch.sigmoid(logits)
+        bce = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
+        probability_of_target = torch.where(labels > 0.5, probabilities, 1.0 - probabilities)
+        focal = (1.0 - probability_of_target).pow(self.gamma) * bce
+        positive = labels
+        negative = 1.0 - labels
+        positive_loss = (focal * positive).sum() / positive.sum().clamp_min(1.0)
+        negative_loss = (focal * negative).sum() / negative.sum().clamp_min(1.0)
+        total = (
+            self.positive_fraction * positive_loss
+            + (1.0 - self.positive_fraction) * negative_loss
+        )
+        predicted = (probabilities >= 0.5).to(labels.dtype)
+        true_positive_rate = (
+            (predicted * positive).sum() / positive.sum().clamp_min(1.0)
+        )
+        false_positive_rate = (
+            (predicted * negative).sum() / negative.sum().clamp_min(1.0)
+        )
+        return total, {
+            "gate_focal": total,
+            "gate_positive_focal": positive_loss,
+            "gate_negative_focal": negative_loss,
+            "gate_target_fraction": labels.mean(),
+            "gate_predicted_fraction": predicted.mean(),
+            "gate_true_positive_rate": true_positive_rate,
+            "gate_false_positive_rate": false_positive_rate,
+        }
+
+
 @torch.no_grad()
 def replay_gru_gates(model: nn.Module, inputs: torch.Tensor, hidden: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
     """Expose standard PyTorch GRU gates and verifyable hidden trajectories."""

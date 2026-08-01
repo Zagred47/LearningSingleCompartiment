@@ -187,6 +187,10 @@ stesso TCN residuale ma restringe il supporto supervisionato a +/-2 ms e ancora
 fortemente il residuo alla GRU fuori dallo spike, per impedire le depolarizzazioni
 larghe osservate nell'esperimento 06.
 
+`notebooks/kaggle_micro_gated_residual_tcn_finetune_08.ipynb` verifica poi una
+decomposizione Mixture-of-Experts standard: GRU lenta congelata e TCN rapido
+moltiplicato da un gate causale sparso, supervisionato con focal loss.
+
 ## API essenziale
 
 ```python

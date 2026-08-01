@@ -42,8 +42,10 @@ from hay_single_compartment import (
     AuxiliarySpikePhaseLoss,
     MICRO_EVENT_NAMES,
     ConservativeSpikeFineTuneLoss,
+    InputOnlyGatedResidualTCN,
     InputOnlyGRU,
     InputOnlyResidualTCN,
+    SpikeGateFocalLoss,
     StratifiedWindowSampler,
     WaveformConstrainedFineTuneLoss,
     classify_micro_events,
@@ -124,15 +126,17 @@ CFG = FineTuneConfig(
 if CFG.objective not in {
     "conservative_v1", "waveform_constrained_v2", "waveform_decoder_v3",
     "phase_weighted_v4", "phase_auxiliary_v5", "residual_tcn_v6",
-    "support_constrained_v7",
+    "support_constrained_v7", "gated_residual_tcn_v8",
 }:
     raise ValueError(f"unknown fine-tuning objective: {CFG.objective}")
 USES_WAVEFORM_CONSTRAINTS = CFG.objective in {
     "waveform_constrained_v2", "waveform_decoder_v3", "phase_weighted_v4",
     "phase_auxiliary_v5", "residual_tcn_v6", "support_constrained_v7",
+    "gated_residual_tcn_v8",
 }
 USES_AUXILIARY_PHASE = CFG.objective == "phase_auxiliary_v5"
 USES_RESIDUAL_TCN = CFG.objective in {"residual_tcn_v6", "support_constrained_v7"}
+USES_GATED_TCN = CFG.objective == "gated_residual_tcn_v8"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if not DATASET.exists():
     raise FileNotFoundError(f"dataset not found: {DATASET}")
@@ -210,6 +214,12 @@ def make_model() -> InputOnlyGRU:
 
 
 def make_candidate_model():
+    if USES_GATED_TCN:
+        return InputOnlyGatedResidualTCN(
+            make_model(), input_dim, state_dim,
+            channels=96, dilations=(1, 2, 4, 8), kernel_size=3,
+            initial_gate_probability=0.01,
+        )
     if USES_RESIDUAL_TCN:
         return InputOnlyResidualTCN(
             make_model(), input_dim, state_dim,
@@ -233,6 +243,14 @@ auxiliary_head = nn.Linear(hidden_dim, 2).to(DEVICE) if USES_AUXILIARY_PHASE els
 auxiliary_criterion = (
     AuxiliarySpikePhaseLoss(state_names, state_mean, state_std).to(DEVICE)
     if USES_AUXILIARY_PHASE else None
+)
+gate_criterion = (
+    SpikeGateFocalLoss(
+        state_names, state_mean, state_std,
+        core_threshold_mV=-35.0, support_radius_steps=2,
+        gamma=2.0, positive_fraction=0.75,
+    ).to(DEVICE)
+    if USES_GATED_TCN else None
 )
 AUXILIARY_PARAMETERS = (
     sum(parameter.numel() for parameter in auxiliary_head.parameters())
@@ -278,7 +296,7 @@ def event_scale(epoch: int) -> float:
     return float(np.clip((epoch - 1) / (CFG.curriculum_epochs - 1), 0.0, 1.0))
 
 
-if CFG.objective == "support_constrained_v7":
+if CFG.objective in {"support_constrained_v7", "gated_residual_tcn_v8"}:
     # The teacher spike core is only one or two 0.5-ms samples wide.  A narrow
     # support prevents overlapping burst masks from rewarding broad plateaus;
     # strong Sobolev and distillation terms require the adapter to learn the
@@ -353,6 +371,8 @@ def evaluate_loss(prediction, target, reference=None):
 
 
 def forward_candidate(inputs, hidden):
+    if USES_GATED_TCN:
+        return finetune_model.forward_with_gate(inputs, hidden)
     if not USES_AUXILIARY_PHASE:
         prediction, next_hidden = finetune_model(inputs, hidden)
         return prediction, next_hidden, None
@@ -372,6 +392,8 @@ def auxiliary_phase_loss(auxiliary, target):
             "auxiliary_total": zero,
             "auxiliary_positive_weight": zero,
         }
+    if USES_GATED_TCN:
+        return gate_criterion(auxiliary, target)
     return auxiliary_criterion(auxiliary, target)
 
 
@@ -381,6 +403,13 @@ def training_objective(prediction, target, reference, auxiliary):
         auxiliary_value, auxiliary_terms = auxiliary_phase_loss(auxiliary, target)
         value = value + criterion.event_scale * 0.25 * auxiliary_value
         terms = {**terms, **auxiliary_terms}
+    elif USES_GATED_TCN:
+        gate_value, gate_terms = auxiliary_phase_loss(auxiliary, target)
+        # Gate supervision is active from epoch 1.  The zero residual head
+        # keeps the physical prediction at the baseline while the shared TCN
+        # first learns to recognize the sparse fast regime.
+        value = value + 0.50 * gate_value
+        terms = {**terms, **gate_terms}
     return value, terms
 
 
@@ -408,7 +437,7 @@ def validation_metrics(model):
             reference_hidden = detach(reference_hidden)
         for start in range(0, inputs.shape[1], CFG.chunk_steps):
             chunk = inputs[:, start : start + CFG.chunk_steps]
-            if USES_AUXILIARY_PHASE and model is finetune_model:
+            if (USES_AUXILIARY_PHASE or USES_GATED_TCN) and model is finetune_model:
                 prediction, hidden, auxiliary = forward_candidate(chunk, hidden)
             else:
                 prediction, hidden = model(chunk, hidden)
@@ -468,6 +497,7 @@ RUN_NAME = {
     "phase_auxiliary_v5": "gru_phase_auxiliary_finetune",
     "residual_tcn_v6": "gru_residual_tcn_finetune",
     "support_constrained_v7": "gru_residual_tcn_support_finetune",
+    "gated_residual_tcn_v8": "gru_gated_residual_tcn_finetune",
 }[CFG.objective]
 LAST_CHECKPOINT = CHECKPOINTS / f"{RUN_NAME}_last.pt"
 BEST_CHECKPOINT = CHECKPOINTS / f"{RUN_NAME}_best.pt"
@@ -879,14 +909,15 @@ waveform_terms = [
 ]
 if CFG.objective in {
     "phase_weighted_v4", "phase_auxiliary_v5", "residual_tcn_v6",
-    "support_constrained_v7",
+    "support_constrained_v7", "gated_residual_tcn_v8",
 }:
     waveform_terms.append("teacher-derived spike-core and slope importance weighting")
 if CFG.objective in {
     "phase_auxiliary_v5", "residual_tcn_v6", "support_constrained_v7",
+    "gated_residual_tcn_v8",
 }:
     waveform_terms.append("explicit physical soma distillation outside spike windows")
-if CFG.objective == "support_constrained_v7":
+if CFG.objective in {"support_constrained_v7", "gated_residual_tcn_v8"}:
     waveform_terms.extend((
         "narrow +/-2 ms teacher-event support",
         "strong first-order Sobolev phase constraint",
@@ -905,6 +936,16 @@ loss_description = (
                 "checkpoint_selection_uses_auxiliary": False,
             }
             if USES_AUXILIARY_PHASE else None
+        ),
+        "inference_gate": (
+            {
+                "architecture": "causal sigmoid-gated residual expert",
+                "target": "teacher spike core dilated by +/-1 ms",
+                "objective": "class-balanced focal loss",
+                "teacher_state_input_at_inference": False,
+                "checkpoint_selection_uses_gate_loss": False,
+            }
+            if USES_GATED_TCN else None
         ),
         "checkpoint_constraints": validation_limits,
     }

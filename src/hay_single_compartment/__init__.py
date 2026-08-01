@@ -47,6 +47,7 @@ from .input_only import (
     InputOnlyConvGRU,
     InputOnlyConvLSTM,
     InputOnlyGRU,
+    InputOnlyGatedResidualTCN,
     InputOnlyResidualTCN,
     StateDecoder,
     count_trainable_parameters,
@@ -62,6 +63,7 @@ from .event_aware import (
     classify_micro_events,
     event_catalog,
     replay_gru_gates,
+    SpikeGateFocalLoss,
     WaveformConstrainedFineTuneLoss,
 )
 
@@ -112,6 +114,7 @@ __all__ = [
     "InputOnlyConvGRU",
     "InputOnlyConvLSTM",
     "InputOnlyGRU",
+    "InputOnlyGatedResidualTCN",
     "InputOnlyResidualTCN",
     "StateDecoder",
     "count_trainable_parameters",
@@ -125,5 +128,6 @@ __all__ = [
     "classify_micro_events",
     "event_catalog",
     "replay_gru_gates",
+    "SpikeGateFocalLoss",
     "WaveformConstrainedFineTuneLoss",
 ]

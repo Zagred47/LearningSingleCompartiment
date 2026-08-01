@@ -158,7 +158,7 @@ teacher.  The +/-10 ms teacher-event masks overlap during bursts, creating a
 loss loophole that rewards a broad depolarization while exempting it from
 baseline distillation.
 
-## Iteration 07: narrow-support residual TCN (Kaggle candidate)
+## Iteration 07: narrow-support residual TCN (rejected)
 
 The architecture, input contract, 61-state output and frozen GRU are unchanged.
 Only the physical constraint is ablated:
@@ -174,3 +174,40 @@ Only the physical constraint is ablated:
 This experiment tests whether the v6 failure was a loss-support shortcut rather
 than insufficient temporal capacity.  The same hard validation constraints and
 epoch-0 fallback remain active.
+
+### Iteration 07 result: spill reduced, fast phase still absent
+
+The selector again retained epoch 0.  Narrow support did reduce the unwanted
+temporal spill, but traded away most of v6's event localization:
+
+- test subthreshold RMSE improved from `2.513` in v6 to `1.893 mV`;
+- soma RMSE improved from `6.162` to `5.075 mV`;
+- median predicted time above -50 mV fell from `6` to `3 ms`, and the maximum
+  time above -35 mV fell from `31` to `15.5 ms`;
+- but matched spikes fell from `14/136` to `2/136` and F1 from `0.176` to
+  `0.028`;
+- despite its larger coefficient, validation derivative loss did not improve
+  (`3.133` baseline versus `3.144` at the last epoch).
+
+The narrow mask therefore closes part of the loss loophole but does not make a
+single continuous residual regressor choose an impulse.  This falsifies the
+"same architecture, stricter support" hypothesis.
+
+## Iteration 08: sparse gated residual TCN (Kaggle candidate)
+
+The next justified established architecture is a gated residual
+Mixture-of-Experts:
+
+- the frozen GRU remains the always-on slow expert;
+- the causal TCN becomes a fast residual expert;
+- a sigmoid gate from the same causal TCN features multiplies the residual;
+- the gate is supervised on the teacher spike core dilated by +/-1 ms using
+  standard class-balanced focal loss;
+- gate supervision is active immediately, while the zero residual projection
+  keeps epoch 0 exactly equal to GRU-MSE;
+- physical checkpoint selection remains independent of gate loss and retains
+  all global, subthreshold, 61-state and slow-state constraints.
+
+This tests the stronger abstract hypothesis that the process is locally
+regime-switching: a slow continuous map plus a sparse fast transition, rather
+than one homogeneous smooth map.

@@ -15,9 +15,11 @@ from hay_single_compartment import (
     InputOnlyConvGRU,
     InputOnlyConvLSTM,
     InputOnlyGRU,
+    InputOnlyGatedResidualTCN,
     InputOnlyResidualTCN,
     MicroEventConfig,
     StratifiedWindowSampler,
+    SpikeGateFocalLoss,
     classify_micro_events,
     replay_gru_gates,
 )
@@ -66,6 +68,27 @@ def test_residual_tcn_is_strictly_causal():
     original, _ = model(inputs)
     changed, _ = model(changed_future)
     torch.testing.assert_close(original[:, :7], changed[:, :7], atol=2e-6, rtol=2e-6)
+
+
+def test_gated_residual_tcn_starts_at_baseline_and_streams_exactly():
+    torch.manual_seed(8)
+    baseline = InputOnlyGRU(6, 4, hidden_dim=5)
+    model = InputOnlyGatedResidualTCN(
+        baseline, input_dim=6, state_dim=4, channels=7, dilations=(1, 2)
+    )
+    inputs = torch.randn(2, 12, 6)
+    expected, _ = baseline(inputs)
+    initial, _ = model(inputs)
+    torch.testing.assert_close(initial, expected)
+    with torch.no_grad():
+        model.adapter.output.weight.normal_(std=0.1)
+        model.gate.bias.fill_(0.0)
+    full, _ = model(inputs)
+    first, hidden = model(inputs[:, :5])
+    second, _ = model(inputs[:, 5:], hidden)
+    torch.testing.assert_close(
+        torch.cat((first, second), dim=1), full, atol=2e-6, rtol=2e-6
+    )
 
 
 def test_input_only_gru_carries_hidden_without_teacher_state():
@@ -222,6 +245,28 @@ def test_auxiliary_spike_phase_loss_supervises_logit_and_derivative():
         "auxiliary_positive_weight",
     }
     assert float(terms["auxiliary_positive_weight"]) > 1.0
+
+
+def test_spike_gate_focal_loss_balances_sparse_support():
+    mean = np.zeros(len(MICRO_STATE_NAMES), dtype=np.float32)
+    std = np.ones_like(mean)
+    soma = MICRO_STATE_NAMES.index("soma.v_mV")
+    mean[soma] = -70.0
+    criterion = SpikeGateFocalLoss(
+        MICRO_STATE_NAMES, mean, std, support_radius_steps=2
+    )
+    target = torch.zeros(2, 20, len(MICRO_STATE_NAMES))
+    target[:, 10, soma] = 80.0
+    logits = torch.full((2, 20, 1), -4.0, requires_grad=True)
+    total, terms = criterion(logits, target)
+    total.backward()
+    assert torch.isfinite(total) and torch.isfinite(logits.grad).all()
+    assert set(terms) == {
+        "gate_focal", "gate_positive_focal", "gate_negative_focal",
+        "gate_target_fraction", "gate_predicted_fraction",
+        "gate_true_positive_rate", "gate_false_positive_rate",
+    }
+    torch.testing.assert_close(terms["gate_target_fraction"], torch.tensor(0.25))
 
 
 @pytest.mark.skipif(importlib.util.find_spec("ncps") is None, reason="optional ncps package")

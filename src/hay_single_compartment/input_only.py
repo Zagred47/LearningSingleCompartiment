@@ -177,6 +177,7 @@ class CausalResidualTCNAdapter(nn.Module):
             raise ValueError("kernel_size must be at least 2")
         self.feature_dim = feature_dim
         self.state_dim = state_dim
+        self.channels = channels
         self.dilations = tuple(dilations)
         self.kernel_size = kernel_size
         self.receptive_field = 1 + (kernel_size - 1) * sum(self.dilations)
@@ -196,7 +197,7 @@ class CausalResidualTCNAdapter(nn.Module):
         nn.init.zeros_(self.output.weight)
         nn.init.zeros_(self.output.bias)
 
-    def forward(
+    def encode(
         self,
         features: torch.Tensor,
         cache: torch.Tensor | None = None,
@@ -212,8 +213,17 @@ class CausalResidualTCNAdapter(nn.Module):
                 f"{(features.shape[0], keep, self.feature_dim)}, got {tuple(cache.shape)}"
             )
         combined = torch.cat((cache, features), dim=1)
-        residual = self.output(self.temporal(combined.transpose(1, 2)))
+        temporal = self.temporal(combined.transpose(1, 2))
         next_cache = combined[:, -keep:] if keep else combined[:, :0]
+        return temporal, next_cache
+
+    def forward(
+        self,
+        features: torch.Tensor,
+        cache: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        temporal, next_cache = self.encode(features, cache)
+        residual = self.output(temporal)
         return residual.transpose(1, 2), next_cache
 
 
@@ -269,6 +279,63 @@ class InputOnlyResidualTCN(nn.Module):
             return None
         recurrent_hidden, adapter_cache = hidden
         return recurrent_hidden.detach(), adapter_cache.detach()
+
+
+class InputOnlyGatedResidualTCN(InputOnlyResidualTCN):
+    """Frozen GRU plus a causally gated fast residual expert.
+
+    This is a two-expert gated residual/Mixture-of-Experts decomposition: the
+    frozen GRU is the always-on slow expert, while a sigmoid gate sparsely
+    activates the causal TCN correction.  Both gate and correction consume
+    only GRU latent features and packed spike inputs.
+    """
+
+    architecture = "frozen_gru_causal_gated_residual_tcn_input_only"
+
+    def __init__(
+        self,
+        baseline: InputOnlyGRU,
+        input_dim: int,
+        state_dim: int,
+        channels: int = 96,
+        dilations: tuple[int, ...] = (1, 2, 4, 8),
+        kernel_size: int = 3,
+        initial_gate_probability: float = 0.01,
+    ) -> None:
+        if not 0.0 < initial_gate_probability < 1.0:
+            raise ValueError("initial_gate_probability must be in (0,1)")
+        super().__init__(
+            baseline,
+            input_dim,
+            state_dim,
+            channels=channels,
+            dilations=dilations,
+            kernel_size=kernel_size,
+        )
+        self.gate = nn.Conv1d(channels, 1, kernel_size=1)
+        nn.init.normal_(self.gate.weight, mean=0.0, std=1e-3)
+        nn.init.constant_(
+            self.gate.bias,
+            math.log(initial_gate_probability / (1.0 - initial_gate_probability)),
+        )
+
+    def forward_with_gate(self, inputs: torch.Tensor, hidden: Any = None):
+        recurrent_hidden, adapter_cache = (None, None) if hidden is None else hidden
+        encoded = self.baseline.input_encoder(inputs)
+        sequence, recurrent_hidden = self.baseline.recurrent(encoded, recurrent_hidden)
+        baseline_prediction = self.baseline.decoder(sequence)
+        temporal, adapter_cache = self.adapter.encode(
+            torch.cat((sequence, inputs), dim=-1), adapter_cache
+        )
+        residual = self.adapter.output(temporal).transpose(1, 2)
+        gate_logits = self.gate(temporal).transpose(1, 2)
+        prediction = baseline_prediction + torch.sigmoid(gate_logits) * residual
+        return prediction, (recurrent_hidden, adapter_cache), gate_logits
+
+    def forward(self, inputs: torch.Tensor, hidden: Any = None, timespans: torch.Tensor | None = None):
+        del timespans
+        prediction, hidden, _ = self.forward_with_gate(inputs, hidden)
+        return prediction, hidden
 
 
 class InputOnlyBranchELM(nn.Module):

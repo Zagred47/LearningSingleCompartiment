@@ -115,7 +115,7 @@ This falsifies the hypothesis that stronger pointwise/deep supervision alone is
 enough.  The frozen GRU latent identifies a spike regime, but its shared
 recurrent/pointwise decoding path does not express the required fast phase.
 
-## Iteration 06: frozen GRU plus causal residual TCN (Kaggle candidate)
+## Iteration 06: frozen GRU plus causal residual TCN (rejected but informative)
 
 The next experiment changes one architectural assumption while preserving the
 input contract and the complete 61-state target:
@@ -136,3 +136,41 @@ last audit and individual/slow-state audit remain in force.  A positive result
 would support the abstract claim that the system contains a fast, finite-memory
 correction superimposed on slower recurrent dynamics.  A rejected result would
 falsify that specific decomposition without damaging the baseline checkpoint.
+
+### Iteration 06 result: temporal localization succeeded, waveform rejected
+
+The validation selector retained epoch 0 because every event-trained candidate
+violated the subthreshold constraint.  Nevertheless, the last candidate gives
+strong evidence that the architectural branch contains useful information:
+
+- spike matches improved from `0/136` for GRU-MSE and `1/136` in iteration 05
+  to `14/136`;
+- 23 spikes were predicted, giving precision `0.609`, recall `0.103` and F1
+  `0.176`;
+- the event waveform term fell from about `3.23` to `2.06` on validation;
+- slow-state mean normalized RMSE remained essentially unchanged (`0.293`);
+- but subthreshold test RMSE rose from `1.076` to `6.162 mV`, so the candidate
+  remains unusable.
+
+The teacher stays above -35 mV for about `1 ms`; the rejected TCN stays there
+for a median `2.25 ms`, and above -50 mV for `6 ms` versus `1 ms` in the
+teacher.  The +/-10 ms teacher-event masks overlap during bursts, creating a
+loss loophole that rewards a broad depolarization while exempting it from
+baseline distillation.
+
+## Iteration 07: narrow-support residual TCN (Kaggle candidate)
+
+The architecture, input contract, 61-state output and frozen GRU are unchanged.
+Only the physical constraint is ablated:
+
+- teacher-event support is narrowed from +/-10 ms to +/-2 ms;
+- first-derivative (Sobolev) weight is increased;
+- full-state and soma residuals are strongly anchored to zero outside support;
+- core weighting is reduced so matching the peak cannot dominate incorrect
+  shoulders;
+- learning rate and curriculum slope are reduced to expose admissible
+  intermediate checkpoints.
+
+This experiment tests whether the v6 failure was a loss-support shortcut rather
+than insufficient temporal capacity.  The same hard validation constraints and
+epoch-0 fallback remain active.

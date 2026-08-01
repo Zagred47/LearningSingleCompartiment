@@ -181,6 +181,12 @@ residuo sui 61 stati da hidden GRU e spike input. La proiezione finale parte da
 zero, quindi l'epoca 0 coincide esattamente con il baseline; dataset e checkpoint
 esistenti vengono scoperti automaticamente negli input Kaggle.
 
+L'ablation successiva è
+`notebooks/kaggle_micro_residual_tcn_support_finetune_07.ipynb`: mantiene lo
+stesso TCN residuale ma restringe il supporto supervisionato a +/-2 ms e ancora
+fortemente il residuo alla GRU fuori dallo spike, per impedire le depolarizzazioni
+larghe osservate nell'esperimento 06.
+
 ## API essenziale
 
 ```python

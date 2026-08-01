@@ -124,14 +124,15 @@ CFG = FineTuneConfig(
 if CFG.objective not in {
     "conservative_v1", "waveform_constrained_v2", "waveform_decoder_v3",
     "phase_weighted_v4", "phase_auxiliary_v5", "residual_tcn_v6",
+    "support_constrained_v7",
 }:
     raise ValueError(f"unknown fine-tuning objective: {CFG.objective}")
 USES_WAVEFORM_CONSTRAINTS = CFG.objective in {
     "waveform_constrained_v2", "waveform_decoder_v3", "phase_weighted_v4",
-    "phase_auxiliary_v5", "residual_tcn_v6",
+    "phase_auxiliary_v5", "residual_tcn_v6", "support_constrained_v7",
 }
 USES_AUXILIARY_PHASE = CFG.objective == "phase_auxiliary_v5"
-USES_RESIDUAL_TCN = CFG.objective == "residual_tcn_v6"
+USES_RESIDUAL_TCN = CFG.objective in {"residual_tcn_v6", "support_constrained_v7"}
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if not DATASET.exists():
     raise FileNotFoundError(f"dataset not found: {DATASET}")
@@ -277,7 +278,26 @@ def event_scale(epoch: int) -> float:
     return float(np.clip((epoch - 1) / (CFG.curriculum_epochs - 1), 0.0, 1.0))
 
 
-if CFG.objective in {"phase_auxiliary_v5", "residual_tcn_v6"}:
+if CFG.objective == "support_constrained_v7":
+    # The teacher spike core is only one or two 0.5-ms samples wide.  A narrow
+    # support prevents overlapping burst masks from rewarding broad plateaus;
+    # strong Sobolev and distillation terms require the adapter to learn the
+    # rapid up/down phase while leaving the frozen GRU map unchanged elsewhere.
+    criterion = WaveformConstrainedFineTuneLoss(
+        state_names,
+        state_mean,
+        state_std,
+        event_state_weight=0.05,
+        waveform_weight=1.50,
+        derivative_weight=4.00,
+        occupancy_weight=0.25,
+        reference_weight=2.00,
+        soma_reference_weight=20.00,
+        event_radius_steps=4,
+        core_emphasis=4.0,
+        slope_emphasis=10.0,
+    ).to(DEVICE)
+elif CFG.objective in {"phase_auxiliary_v5", "residual_tcn_v6"}:
     criterion = WaveformConstrainedFineTuneLoss(
         state_names,
         state_mean,
@@ -447,6 +467,7 @@ RUN_NAME = {
     "phase_weighted_v4": "gru_phase_weighted_finetune",
     "phase_auxiliary_v5": "gru_phase_auxiliary_finetune",
     "residual_tcn_v6": "gru_residual_tcn_finetune",
+    "support_constrained_v7": "gru_residual_tcn_support_finetune",
 }[CFG.objective]
 LAST_CHECKPOINT = CHECKPOINTS / f"{RUN_NAME}_last.pt"
 BEST_CHECKPOINT = CHECKPOINTS / f"{RUN_NAME}_best.pt"
@@ -856,10 +877,20 @@ waveform_terms = [
     "symmetric soft threshold occupancy",
     "frozen-baseline functional distillation outside spike windows",
 ]
-if CFG.objective in {"phase_weighted_v4", "phase_auxiliary_v5", "residual_tcn_v6"}:
+if CFG.objective in {
+    "phase_weighted_v4", "phase_auxiliary_v5", "residual_tcn_v6",
+    "support_constrained_v7",
+}:
     waveform_terms.append("teacher-derived spike-core and slope importance weighting")
-if CFG.objective in {"phase_auxiliary_v5", "residual_tcn_v6"}:
+if CFG.objective in {
+    "phase_auxiliary_v5", "residual_tcn_v6", "support_constrained_v7",
+}:
     waveform_terms.append("explicit physical soma distillation outside spike windows")
+if CFG.objective == "support_constrained_v7":
+    waveform_terms.extend((
+        "narrow +/-2 ms teacher-event support",
+        "strong first-order Sobolev phase constraint",
+    ))
 loss_description = (
     {
         "global_mse_always_active": True,

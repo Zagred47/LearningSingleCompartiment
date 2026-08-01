@@ -39,6 +39,7 @@ except ImportError:
         return _PlainProgress(iterable, desc)
 
 from hay_single_compartment import (
+    AuxiliarySpikePhaseLoss,
     MICRO_EVENT_NAMES,
     ConservativeSpikeFineTuneLoss,
     InputOnlyGRU,
@@ -119,8 +120,16 @@ CFG = FineTuneConfig(
     context_steps=int(os.environ.get("HAY_FINETUNE_CONTEXT_STEPS", "4000")),
     curriculum_epochs=int(os.environ.get("HAY_FINETUNE_CURRICULUM_EPOCHS", "5")),
 )
-if CFG.objective not in {"conservative_v1", "waveform_constrained_v2"}:
+if CFG.objective not in {
+    "conservative_v1", "waveform_constrained_v2", "waveform_decoder_v3",
+    "phase_weighted_v4", "phase_auxiliary_v5",
+}:
     raise ValueError(f"unknown fine-tuning objective: {CFG.objective}")
+USES_WAVEFORM_CONSTRAINTS = CFG.objective in {
+    "waveform_constrained_v2", "waveform_decoder_v3", "phase_weighted_v4",
+    "phase_auxiliary_v5",
+}
+USES_AUXILIARY_PHASE = CFG.objective == "phase_auxiliary_v5"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if not DATASET.exists():
     raise FileNotFoundError(f"dataset not found: {DATASET}")
@@ -194,8 +203,27 @@ baseline_model = make_model().to(DEVICE).eval()
 for parameter in baseline_model.parameters():
     parameter.requires_grad_(False)
 finetune_model = make_model()
-MODEL_PARAMETERS = count_trainable_parameters(finetune_model)
-print("parameters:", MODEL_PARAMETERS)
+if CFG.objective == "waveform_decoder_v3":
+    for parameter in finetune_model.input_encoder.parameters():
+        parameter.requires_grad_(False)
+    for parameter in finetune_model.recurrent.parameters():
+        parameter.requires_grad_(False)
+MODEL_PARAMETERS = sum(parameter.numel() for parameter in finetune_model.parameters())
+TRAINABLE_PARAMETERS = count_trainable_parameters(finetune_model)
+auxiliary_head = nn.Linear(hidden_dim, 2).to(DEVICE) if USES_AUXILIARY_PHASE else None
+auxiliary_criterion = (
+    AuxiliarySpikePhaseLoss(state_names, state_mean, state_std).to(DEVICE)
+    if USES_AUXILIARY_PHASE else None
+)
+AUXILIARY_PARAMETERS = (
+    sum(parameter.numel() for parameter in auxiliary_head.parameters())
+    if auxiliary_head is not None else 0
+)
+print(
+    "parameters:", MODEL_PARAMETERS,
+    "| trainable:", TRAINABLE_PARAMETERS,
+    "| training-only auxiliary:", AUXILIARY_PARAMETERS,
+)
 print("objective:", CFG.objective)
 
 
@@ -227,7 +255,48 @@ def event_scale(epoch: int) -> float:
     return float(np.clip((epoch - 1) / (CFG.curriculum_epochs - 1), 0.0, 1.0))
 
 
-if CFG.objective == "waveform_constrained_v2":
+if CFG.objective == "phase_auxiliary_v5":
+    criterion = WaveformConstrainedFineTuneLoss(
+        state_names,
+        state_mean,
+        state_std,
+        event_state_weight=0.05,
+        waveform_weight=2.00,
+        derivative_weight=1.00,
+        occupancy_weight=1.00,
+        reference_weight=1.00,
+        soma_reference_weight=5.00,
+        event_radius_steps=20,
+        core_emphasis=20.0,
+        slope_emphasis=5.0,
+    ).to(DEVICE)
+elif CFG.objective == "phase_weighted_v4":
+    criterion = WaveformConstrainedFineTuneLoss(
+        state_names,
+        state_mean,
+        state_std,
+        event_state_weight=0.05,
+        waveform_weight=2.00,
+        derivative_weight=1.00,
+        occupancy_weight=1.00,
+        reference_weight=1.00,
+        event_radius_steps=20,
+        core_emphasis=20.0,
+        slope_emphasis=5.0,
+    ).to(DEVICE)
+elif CFG.objective == "waveform_decoder_v3":
+    criterion = WaveformConstrainedFineTuneLoss(
+        state_names,
+        state_mean,
+        state_std,
+        event_state_weight=0.05,
+        waveform_weight=1.00,
+        derivative_weight=0.25,
+        occupancy_weight=0.25,
+        reference_weight=0.50,
+        event_radius_steps=20,
+    ).to(DEVICE)
+elif CFG.objective == "waveform_constrained_v2":
     criterion = WaveformConstrainedFineTuneLoss(
         state_names, state_mean, state_std, event_radius_steps=20
     ).to(DEVICE)
@@ -236,9 +305,41 @@ else:
 
 
 def evaluate_loss(prediction, target, reference=None):
-    if CFG.objective == "waveform_constrained_v2":
+    if USES_WAVEFORM_CONSTRAINTS:
         return criterion(prediction, target, reference)
     return criterion(prediction, target)
+
+
+def forward_candidate(inputs, hidden):
+    if not USES_AUXILIARY_PHASE:
+        prediction, next_hidden = finetune_model(inputs, hidden)
+        return prediction, next_hidden, None
+    encoded = finetune_model.input_encoder(inputs)
+    sequence, next_hidden = finetune_model.recurrent(encoded, hidden)
+    prediction = finetune_model.decoder(sequence)
+    auxiliary = auxiliary_head(sequence)
+    return prediction, next_hidden, auxiliary
+
+
+def auxiliary_phase_loss(auxiliary, target):
+    if auxiliary is None:
+        zero = target.new_zeros(())
+        return zero, {
+            "auxiliary_bce": zero,
+            "auxiliary_derivative": zero,
+            "auxiliary_total": zero,
+            "auxiliary_positive_weight": zero,
+        }
+    return auxiliary_criterion(auxiliary, target)
+
+
+def training_objective(prediction, target, reference, auxiliary):
+    value, terms = evaluate_loss(prediction, target, reference)
+    if USES_AUXILIARY_PHASE:
+        auxiliary_value, auxiliary_terms = auxiliary_phase_loss(auxiliary, target)
+        value = value + criterion.event_scale * 0.25 * auxiliary_value
+        terms = {**terms, **auxiliary_terms}
+    return value, terms
 
 
 @torch.no_grad()
@@ -263,10 +364,17 @@ def validation_metrics(model):
             reference_hidden = detach(reference_hidden)
         for start in range(0, inputs.shape[1], CFG.chunk_steps):
             chunk = inputs[:, start : start + CFG.chunk_steps]
-            prediction, hidden = model(chunk, hidden)
+            if USES_AUXILIARY_PHASE and model is finetune_model:
+                prediction, hidden, auxiliary = forward_candidate(chunk, hidden)
+            else:
+                prediction, hidden = model(chunk, hidden)
+                auxiliary = None
             reference, reference_hidden = baseline_model(chunk, reference_hidden)
             target = targets[:, start + 1 : start + 1 + chunk.shape[1]]
             value, terms = evaluate_loss(prediction, target, reference)
+            if auxiliary is not None:
+                _, auxiliary_terms = auxiliary_phase_loss(auxiliary, target)
+                terms = {**terms, **auxiliary_terms}
             weight = target.shape[0] * target.shape[1]
             totals["selection"] = totals.get("selection", 0.0) + float(value) * weight
             for key, term in terms.items():
@@ -298,14 +406,33 @@ def validation_metrics(model):
     return metrics
 
 
-RUN_NAME = (
-    "gru_waveform_finetune" if CFG.objective == "waveform_constrained_v2"
-    else "gru_spike_finetune"
-)
+RUN_NAME = {
+    "conservative_v1": "gru_spike_finetune",
+    "waveform_constrained_v2": "gru_waveform_finetune",
+    "waveform_decoder_v3": "gru_decoder_waveform_finetune",
+    "phase_weighted_v4": "gru_phase_weighted_finetune",
+    "phase_auxiliary_v5": "gru_phase_auxiliary_finetune",
+}[CFG.objective]
 LAST_CHECKPOINT = CHECKPOINTS / f"{RUN_NAME}_last.pt"
 BEST_CHECKPOINT = CHECKPOINTS / f"{RUN_NAME}_best.pt"
+MODEL_OPTIMIZATION_PARAMETERS = [
+    parameter for parameter in finetune_model.parameters()
+    if parameter.requires_grad
+]
+AUXILIARY_OPTIMIZATION_PARAMETERS = (
+    list(auxiliary_head.parameters()) if auxiliary_head is not None else []
+)
+ALL_OPTIMIZATION_PARAMETERS = (
+    MODEL_OPTIMIZATION_PARAMETERS + AUXILIARY_OPTIMIZATION_PARAMETERS
+)
+optimizer_groups = [{
+    "params": MODEL_OPTIMIZATION_PARAMETERS,
+    "lr": CFG.learning_rate,
+}]
+if auxiliary_head is not None:
+    optimizer_groups.append({"params": AUXILIARY_OPTIMIZATION_PARAMETERS, "lr": 1e-3})
 optimizer = torch.optim.AdamW(
-    finetune_model.parameters(), lr=CFG.learning_rate, weight_decay=CFG.weight_decay
+    optimizer_groups, weight_decay=CFG.weight_decay
 )
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CFG.epochs)
 scaler = torch.amp.GradScaler("cuda", enabled=DEVICE.type == "cuda")
@@ -323,7 +450,7 @@ validation_limits = {
 
 
 def save_best(model, epoch, score, admissible):
-    torch.save({
+    payload = {
         "format_version": 4,
         "model_name": RUN_NAME,
         "model_state_dict": model.state_dict(),
@@ -337,10 +464,13 @@ def save_best(model, epoch, score, admissible):
         "epoch": epoch,
         "admissible": admissible,
         "validation_limits": validation_limits,
-    }, BEST_CHECKPOINT)
+    }
+    if auxiliary_head is not None:
+        payload["auxiliary_head_state_dict"] = auxiliary_head.state_dict()
+    torch.save(payload, BEST_CHECKPOINT)
 
 
-if CFG.objective == "waveform_constrained_v2":
+if USES_WAVEFORM_CONSTRAINTS:
     best_score = baseline_validation["selection"]
 
 resumed = False
@@ -348,6 +478,8 @@ if LAST_CHECKPOINT.exists() and os.environ.get("HAY_FINETUNE_FORCE_RESTART", "0"
     resume = torch.load(LAST_CHECKPOINT, map_location=DEVICE, weights_only=False)
     if resume.get("config") == asdict(CFG):
         finetune_model.load_state_dict(resume["model_state_dict"])
+        if auxiliary_head is not None:
+            auxiliary_head.load_state_dict(resume["auxiliary_head_state_dict"])
         optimizer.load_state_dict(resume["optimizer_state_dict"])
         scheduler.load_state_dict(resume["scheduler_state_dict"])
         scaler.load_state_dict(resume["scaler_state_dict"])
@@ -358,7 +490,7 @@ if LAST_CHECKPOINT.exists() and os.environ.get("HAY_FINETUNE_FORCE_RESTART", "0"
         resumed = True
         print(f"resume fine-tuning from completed epoch {start_epoch - 1}")
 
-if CFG.objective == "waveform_constrained_v2" and not resumed:
+if USES_WAVEFORM_CONSTRAINTS and not resumed:
     save_best(baseline_model, 0, best_score, True)
 
 def make_sampler(epoch: int) -> StratifiedWindowSampler:
@@ -398,11 +530,13 @@ for epoch in epoch_bar:
                     reference, next_reference_hidden = baseline_model(chunk, reference_hidden)
                 optimizer.zero_grad(set_to_none=True)
                 with torch.autocast("cuda", dtype=torch.float16, enabled=DEVICE.type == "cuda"):
-                    prediction, next_hidden = finetune_model(chunk, hidden)
-                    loss, _ = evaluate_loss(prediction, target, reference)
+                    prediction, next_hidden, auxiliary = forward_candidate(chunk, hidden)
+                    loss, _ = training_objective(
+                        prediction, target, reference, auxiliary
+                    )
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
-                nn.utils.clip_grad_norm_(finetune_model.parameters(), CFG.gradient_clip)
+                nn.utils.clip_grad_norm_(ALL_OPTIMIZATION_PARAMETERS, CFG.gradient_clip)
                 scaler.step(optimizer)
                 scaler.update()
                 hidden = detach(next_hidden)
@@ -432,11 +566,13 @@ for epoch in epoch_bar:
             reference, _ = baseline_model(window_t, reference_hidden)
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast("cuda", dtype=torch.float16, enabled=DEVICE.type == "cuda"):
-            prediction, _ = finetune_model(window_t, hidden)
-            loss, _ = evaluate_loss(prediction, target_t, reference)
+            prediction, _, auxiliary = forward_candidate(window_t, hidden)
+            loss, _ = training_objective(
+                prediction, target_t, reference, auxiliary
+            )
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
-        nn.utils.clip_grad_norm_(finetune_model.parameters(), CFG.gradient_clip)
+        nn.utils.clip_grad_norm_(ALL_OPTIMIZATION_PARAMETERS, CFG.gradient_clip)
         scaler.step(optimizer)
         scaler.update()
         running += float(loss.detach())
@@ -446,7 +582,7 @@ for epoch in epoch_bar:
     validation = validation_metrics(finetune_model)
     score = validation["selection"]
     admissible = True
-    if CFG.objective == "waveform_constrained_v2":
+    if USES_WAVEFORM_CONSTRAINTS:
         admissible = (
             validation["global"] <= validation_limits["global"]
             and validation["subthreshold_rmse_mV"] <= validation_limits["subthreshold_rmse_mV"]
@@ -470,7 +606,7 @@ for epoch in epoch_bar:
         save_best(finetune_model, epoch, best_score, admissible)
     else:
         stale += 1
-    torch.save({
+    last_payload = {
         "format_version": 3,
         "model_state_dict": finetune_model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
@@ -481,7 +617,10 @@ for epoch in epoch_bar:
         "epoch": epoch,
         "best_score": best_score,
         "stale": stale,
-    }, LAST_CHECKPOINT)
+    }
+    if auxiliary_head is not None:
+        last_payload["auxiliary_head_state_dict"] = auxiliary_head.state_dict()
+    torch.save(last_payload, LAST_CHECKPOINT)
     pd.DataFrame(history).to_csv(OUTPUT / "finetune_history.csv", index=False)
     epoch_bar.set_postfix(
         train=f"{row['train_loss']:.3e}",
@@ -497,8 +636,15 @@ for epoch in epoch_bar:
 
 best_payload = torch.load(BEST_CHECKPOINT, map_location=DEVICE, weights_only=False)
 finetune_model.load_state_dict(best_payload["model_state_dict"])
+if auxiliary_head is not None and "auxiliary_head_state_dict" in best_payload:
+    auxiliary_head.load_state_dict(best_payload["auxiliary_head_state_dict"])
+    auxiliary_head.eval()
 baseline_model = baseline_model.to(DEVICE).eval()
 finetune_model.eval()
+last_payload = torch.load(LAST_CHECKPOINT, map_location=DEVICE, weights_only=False)
+last_model = make_model().to(DEVICE)
+last_model.load_state_dict(last_payload["model_state_dict"])
+last_model.eval()
 
 
 @torch.no_grad()
@@ -555,6 +701,10 @@ predictions = {
     "gru_mse": predict(baseline_model),
     RUN_NAME: predict(finetune_model),
 }
+last_epoch = int(last_payload.get("epoch", -1))
+selected_epoch = int(best_payload.get("epoch", -1))
+if last_epoch != selected_epoch:
+    predictions[f"{RUN_NAME}_last_rejected"] = predict(last_model)
 rows = []
 soma_index = state_names.index("soma.v_mV")
 for name, prediction in predictions.items():
@@ -562,12 +712,22 @@ for name, prediction in predictions.items():
     row = {
         "model": name,
         "parameters": MODEL_PARAMETERS,
+        "trainable_parameters": 0 if name == "gru_mse" else TRAINABLE_PARAMETERS,
         "test_mean_normalized_rmse": float(np.mean(np.sqrt(np.mean(np.square(error), axis=(0, 1))) / state_std)),
         "test_soma_rmse_mV": float(np.sqrt(np.mean(np.square(error[..., soma_index])))),
         "time_above_threshold_s": float(
             np.sum(prediction[..., soma_index] >= -20.0) * MODEL_DT_MS / 1000.0
         ),
-        "selected_epoch": 0 if name == "gru_mse" else int(best_payload.get("epoch", -1)),
+        "selected_epoch": (
+            0 if name == "gru_mse"
+            else last_epoch if name.endswith("_last_rejected")
+            else selected_epoch
+        ),
+        "checkpoint_selected": not name.endswith("_last_rejected"),
+        "checkpoint_admissible": (
+            bool(history[-1]["checkpoint_admissible"])
+            if name.endswith("_last_rejected") and history else True
+        ),
         **match_spikes(truth[..., soma_index], prediction[..., soma_index]),
     }
     for event_index, event_name in enumerate(MICRO_EVENT_NAMES):
@@ -593,6 +753,15 @@ figure, axis = plt.subplots(figsize=(16, 5))
 axis.plot(time_ms, truth[trajectory, :steps, soma_index], label="teacher", linewidth=1.4)
 axis.plot(time_ms, predictions["gru_mse"][trajectory, :steps, soma_index], label="GRU-MSE", alpha=0.85)
 axis.plot(time_ms, predictions[RUN_NAME][trajectory, :steps, soma_index], label=RUN_NAME, alpha=0.85)
+last_name = f"{RUN_NAME}_last_rejected"
+if last_name in predictions:
+    axis.plot(
+        time_ms,
+        predictions[last_name][trajectory, :steps, soma_index],
+        label=last_name,
+        alpha=0.75,
+        linestyle="--",
+    )
 axis.axhline(-20.0, color="black", linestyle="--", linewidth=0.8, alpha=0.5)
 axis.set(xlabel="time (ms)", ylabel="soma V (mV)", title="Natural held-out test rollout")
 axis.legend()
@@ -601,21 +770,35 @@ figure.tight_layout()
 figure.savefig(OUTPUT / "soma_comparison.png", dpi=170)
 plt.close(figure)
 
+waveform_terms = [
+    "symmetric event-state regression",
+    "symmetric soma waveform regression",
+    "Sobolev first-derivative matching",
+    "symmetric soft threshold occupancy",
+    "frozen-baseline functional distillation outside spike windows",
+]
+if CFG.objective in {"phase_weighted_v4", "phase_auxiliary_v5"}:
+    waveform_terms.append("teacher-derived spike-core and slope importance weighting")
+if CFG.objective == "phase_auxiliary_v5":
+    waveform_terms.append("explicit physical soma distillation outside spike windows")
 loss_description = (
     {
         "global_mse_always_active": True,
         "curriculum": "linear 0->1",
-        "rare_terms": [
-            "symmetric event-state regression",
-            "symmetric soma waveform regression",
-            "Sobolev first-derivative matching",
-            "symmetric soft threshold occupancy",
-            "frozen-baseline functional distillation outside spike windows",
-        ],
+        "rare_terms": waveform_terms,
         "excluded_shortcuts": ["positive-class-weighted BCE", "one-sided peak deficit"],
+        "training_only_auxiliary": (
+            {
+                "head": "Linear(hidden_dim, 2)",
+                "targets": ["suprathreshold occupancy", "normalized voltage derivative"],
+                "inference_dependency": False,
+                "checkpoint_selection_uses_auxiliary": False,
+            }
+            if USES_AUXILIARY_PHASE else None
+        ),
         "checkpoint_constraints": validation_limits,
     }
-    if CFG.objective == "waveform_constrained_v2"
+    if USES_WAVEFORM_CONSTRAINTS
     else {
         "global_mse_always_active": True,
         "curriculum": "linear 0->1",
@@ -628,6 +811,9 @@ loss_description = (
     "dataset_model": dataset_model,
     "baseline_checkpoint": str(BASELINE_CHECKPOINT),
     "model_dt_ms": MODEL_DT_MS,
+    "model_parameters": MODEL_PARAMETERS,
+    "trainable_model_parameters": TRAINABLE_PARAMETERS,
+    "training_only_auxiliary_parameters": AUXILIARY_PARAMETERS,
     "config": asdict(CFG),
     "baseline_validation": baseline_validation,
     "selected_epoch": int(best_payload.get("epoch", -1)),

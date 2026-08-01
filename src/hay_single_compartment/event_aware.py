@@ -435,10 +435,14 @@ class WaveformConstrainedFineTuneLoss(nn.Module):
         derivative_weight: float = 0.10,
         occupancy_weight: float = 0.10,
         reference_weight: float = 0.25,
+        soma_reference_weight: float = 0.0,
         spike_threshold_mV: float = -20.0,
         voltage_scale_mV: float = 20.0,
         occupancy_temperature_mV: float = 2.5,
         event_radius_steps: int = 20,
+        core_threshold_mV: float = -35.0,
+        core_emphasis: float = 0.0,
+        slope_emphasis: float = 0.0,
     ) -> None:
         super().__init__()
         names = list(state_names)
@@ -452,10 +456,14 @@ class WaveformConstrainedFineTuneLoss(nn.Module):
         self.derivative_weight = derivative_weight
         self.occupancy_weight = occupancy_weight
         self.reference_weight = reference_weight
+        self.soma_reference_weight = soma_reference_weight
         self.spike_threshold_mV = spike_threshold_mV
         self.voltage_scale_mV = voltage_scale_mV
         self.occupancy_temperature_mV = occupancy_temperature_mV
         self.event_radius_steps = event_radius_steps
+        self.core_threshold_mV = core_threshold_mV
+        self.core_emphasis = core_emphasis
+        self.slope_emphasis = slope_emphasis
 
     def set_event_scale(self, value: float) -> None:
         if not 0.0 <= value <= 1.0:
@@ -497,11 +505,20 @@ class WaveformConstrainedFineTuneLoss(nn.Module):
         state_error = (prediction - target).square().mean(-1)
         event_state = (state_error * event_mask).sum() / event_denominator
         waveform_error = ((pv - tv) / self.voltage_scale_mV).square()
-        waveform = (waveform_error * event_mask).sum() / event_denominator
+        teacher_core = torch.sigmoid(
+            (tv - self.core_threshold_mV) / self.occupancy_temperature_mV
+        )
+        waveform_mask = event_mask * (1.0 + self.core_emphasis * teacher_core)
+        waveform = (
+            waveform_error * waveform_mask
+        ).sum() / waveform_mask.sum().clamp_min(1.0)
 
         prediction_derivative = (pv[..., 1:] - pv[..., :-1]) / self.voltage_scale_mV
         target_derivative = (tv[..., 1:] - tv[..., :-1]) / self.voltage_scale_mV
         derivative_mask = torch.maximum(event_mask[..., 1:], event_mask[..., :-1])
+        derivative_mask = derivative_mask * (
+            1.0 + self.slope_emphasis * target_derivative.abs().clamp_max(2.0)
+        )
         derivative = (
             (prediction_derivative - target_derivative).square() * derivative_mask
         ).sum() / derivative_mask.sum().clamp_min(1.0)
@@ -518,12 +535,19 @@ class WaveformConstrainedFineTuneLoss(nn.Module):
 
         if reference is None:
             reference_loss = global_loss.new_zeros(())
+            soma_reference = global_loss.new_zeros(())
         else:
             non_event_mask = 1.0 - event_mask
             non_event_denominator = non_event_mask.sum().clamp_min(1.0)
             reference_error = (prediction - reference.detach()).square().mean(-1)
             reference_loss = (
                 reference_error * non_event_mask
+            ).sum() / non_event_denominator
+            reference_physical = self._physical(reference.detach())
+            reference_voltage = reference_physical[..., self.soma_index]
+            soma_reference = (
+                ((pv - reference_voltage) / self.voltage_scale_mV).square()
+                * non_event_mask
             ).sum() / non_event_denominator
 
         event_loss = (
@@ -532,6 +556,7 @@ class WaveformConstrainedFineTuneLoss(nn.Module):
             + self.derivative_weight * derivative
             + self.occupancy_weight * occupancy
             + self.reference_weight * reference_loss
+            + self.soma_reference_weight * soma_reference
         )
         total = self.global_weight * global_loss + self.event_scale * event_loss
         terms = {
@@ -541,11 +566,84 @@ class WaveformConstrainedFineTuneLoss(nn.Module):
             "derivative": derivative,
             "occupancy": occupancy,
             "reference": reference_loss,
+            "soma_reference": soma_reference,
             "event": event_loss,
             "event_scale": self.event_scale.clone(),
             "event_fraction": event_mask.mean(),
         }
         return total, terms
+
+
+class AuxiliarySpikePhaseLoss(nn.Module):
+    """Training-only deep supervision for rapid spike phase in GRU latents.
+
+    The two auxiliary outputs are a suprathreshold logit and a normalized
+    voltage derivative.  They never become membrane-voltage predictions and
+    are not required during surrogate inference.
+    """
+
+    def __init__(
+        self,
+        state_names: Sequence[str],
+        state_mean: np.ndarray | torch.Tensor,
+        state_std: np.ndarray | torch.Tensor,
+        *,
+        spike_threshold_mV: float = -20.0,
+        phase_voltage_mV: float = -50.0,
+        derivative_scale_mV: float = 20.0,
+        derivative_phase_threshold: float = 0.25,
+        derivative_weight: float = 0.5,
+        positive_weight_cap: float = 64.0,
+    ) -> None:
+        super().__init__()
+        self.soma_index = list(state_names).index("soma.v_mV")
+        self.register_buffer("state_mean", torch.as_tensor(state_mean, dtype=torch.float32))
+        self.register_buffer("state_std", torch.as_tensor(state_std, dtype=torch.float32))
+        self.spike_threshold_mV = spike_threshold_mV
+        self.phase_voltage_mV = phase_voltage_mV
+        self.derivative_scale_mV = derivative_scale_mV
+        self.derivative_phase_threshold = derivative_phase_threshold
+        self.derivative_weight = derivative_weight
+        self.positive_weight_cap = positive_weight_cap
+
+    def forward(
+        self, auxiliary: torch.Tensor, target: torch.Tensor
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if auxiliary.shape[:-1] != target.shape[:-1] or auxiliary.shape[-1] != 2:
+            raise ValueError("auxiliary output must match target time axes and have width 2")
+        voltage = (
+            target[..., self.soma_index] * self.state_std[self.soma_index]
+            + self.state_mean[self.soma_index]
+        )
+        spike_level = (voltage >= self.spike_threshold_mV).to(voltage.dtype)
+        positives = spike_level.sum()
+        negatives = spike_level.numel() - positives
+        positive_weight = torch.where(
+            positives > 0,
+            (negatives / positives.clamp_min(1.0)).clamp(1.0, self.positive_weight_cap),
+            positives.new_tensor(1.0),
+        ).detach()
+        bce = F.binary_cross_entropy_with_logits(
+            auxiliary[..., 0], spike_level, pos_weight=positive_weight
+        )
+        target_derivative = torch.zeros_like(voltage)
+        target_derivative[..., 1:] = (
+            voltage[..., 1:] - voltage[..., :-1]
+        ) / self.derivative_scale_mV
+        phase_mask = (
+            (voltage >= self.phase_voltage_mV)
+            | (target_derivative.abs() >= self.derivative_phase_threshold)
+        ).to(voltage.dtype)
+        derivative = (
+            (auxiliary[..., 1] - target_derivative).square() * phase_mask
+        ).sum() / phase_mask.sum().clamp_min(1.0)
+        total = bce + self.derivative_weight * derivative
+        return total, {
+            "auxiliary_bce": bce,
+            "auxiliary_derivative": derivative,
+            "auxiliary_total": total,
+            "auxiliary_positive_weight": positive_weight,
+        }
 
 
 @torch.no_grad()

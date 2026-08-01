@@ -48,3 +48,49 @@ It removes the asymmetric peak deficit, positive-weighted BCE and separately
 overweighted rapid-gate term.  Stratified event windows remain the mechanism for
 showing rare trajectories more often; the loss no longer changes their target
 class prior.
+
+## Real-data preflight evidence
+
+A diagnostic subset was formed from the real HDF5 using 6 event-rich training,
+2 validation and 2 test trajectories.  This is not a replacement benchmark; it
+was used only to falsify mechanisms before spending a full Kaggle run.
+
+- v2, all parameters trainable: every epoch violated the global constraint and
+  no predicted crossing appeared;
+- v3, only the existing decoder trainable: global and subthreshold behaviour
+  were preserved, but spike waveform error changed by less than 0.1% and no
+  crossing appeared;
+- v4, all parameters plus teacher-derived core/slope weighting: weighted
+  waveform error fell by about 18%, but the subthreshold soma RMSE increased
+  from 2.29 mV to more than 4.3 mV and no crossing appeared.
+
+The v4 full-state reference term stayed numerically small while soma voltage
+degraded because its error was averaged with 60 other states.  This motivates a
+separate physical soma-reference constraint outside teacher event windows.
+
+## Latent-state probes
+
+A frozen-GRU linear probe was trained only for diagnosis.  On held-out real
+trajectories it obtained:
+
+- suprathreshold occupancy: ROC-AUC 0.975, average precision 0.0525 versus a
+  0.0024 prevalence;
+- a +/-2 ms crossing neighbourhood: ROC-AUC 0.979, average precision 0.318
+  versus a 0.0153 prevalence.
+
+Pointwise MLP and causal linear probes using 1--8 ms of hidden-state history did
+not improve exact occupancy average precision.  The latent therefore identifies
+the slow spike regime well but does not linearly encode the exact rapid phase.
+
+## Iteration 05: auxiliary phase supervision (Kaggle candidate)
+
+The GRU, input contract and 61-state decoder remain unchanged at inference.  A
+training-only standard linear auxiliary head is attached to the recurrent
+sequence and jointly predicts suprathreshold occupancy and local voltage
+derivative.  This is deep supervision: it forces rapid phase information into
+the latent without converting classifier probability into membrane voltage.
+
+The physical objective retains symmetric waveform/derivative matching and adds
+an explicit soma-voltage distillation term outside spike windows.  The auxiliary
+head is saved for audit but is not required for inference.  Checkpoint admission
+still uses only physical rollout metrics and the original hard constraints.

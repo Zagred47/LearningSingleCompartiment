@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from hay_single_compartment import (
+    AuxiliarySpikePhaseLoss,
     MICRO_STATE_NAMES,
     ConservativeSpikeFineTuneLoss,
     EventAwareStateLoss,
@@ -141,7 +142,7 @@ def test_waveform_constrained_loss_is_symmetric_and_anchors_non_events():
     assert total > terms["global"]
     assert set(terms) == {
         "global", "event_state", "waveform", "derivative", "occupancy",
-        "reference", "event", "event_scale", "event_fraction",
+        "reference", "soma_reference", "event", "event_scale", "event_fraction",
     }
 
     undershoot = target.clone()
@@ -156,6 +157,25 @@ def test_waveform_constrained_loss_is_symmetric_and_anchors_non_events():
     late_plateau[:, 16:, soma] = 80.0
     _, plateau_terms = criterion(late_plateau, target, reference)
     assert plateau_terms["reference"] > 0
+
+
+def test_auxiliary_spike_phase_loss_supervises_logit_and_derivative():
+    mean = np.zeros(len(MICRO_STATE_NAMES), dtype=np.float32)
+    std = np.ones_like(mean)
+    soma = MICRO_STATE_NAMES.index("soma.v_mV")
+    mean[soma] = -70.0
+    criterion = AuxiliarySpikePhaseLoss(MICRO_STATE_NAMES, mean, std)
+    target = torch.zeros(2, 20, len(MICRO_STATE_NAMES))
+    target[:, 10, soma] = 80.0
+    auxiliary = torch.zeros(2, 20, 2, requires_grad=True)
+    total, terms = criterion(auxiliary, target)
+    total.backward()
+    assert torch.isfinite(total) and torch.isfinite(auxiliary.grad).all()
+    assert set(terms) == {
+        "auxiliary_bce", "auxiliary_derivative", "auxiliary_total",
+        "auxiliary_positive_weight",
+    }
+    assert float(terms["auxiliary_positive_weight"]) > 1.0
 
 
 @pytest.mark.skipif(importlib.util.find_spec("ncps") is None, reason="optional ncps package")

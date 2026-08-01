@@ -51,6 +51,7 @@ from .input_only import (
     move_hidden,
 )
 from .event_aware import (
+    AuxiliarySpikePhaseLoss,
     MICRO_EVENT_NAMES,
     ConservativeSpikeFineTuneLoss,
     EventAwareStateLoss,
@@ -112,6 +113,7 @@ __all__ = [
     "count_trainable_parameters",
     "move_hidden",
     "MICRO_EVENT_NAMES",
+    "AuxiliarySpikePhaseLoss",
     "ConservativeSpikeFineTuneLoss",
     "EventAwareStateLoss",
     "MicroEventConfig",

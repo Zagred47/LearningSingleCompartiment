@@ -59,6 +59,7 @@ from .event_aware import (
     classify_micro_events,
     event_catalog,
     replay_gru_gates,
+    WaveformConstrainedFineTuneLoss,
 )
 
 __all__ = [
@@ -118,4 +119,5 @@ __all__ = [
     "classify_micro_events",
     "event_catalog",
     "replay_gru_gates",
+    "WaveformConstrainedFineTuneLoss",
 ]

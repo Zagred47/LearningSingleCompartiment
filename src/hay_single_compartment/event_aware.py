@@ -413,6 +413,141 @@ class ConservativeSpikeFineTuneLoss(nn.Module):
         return total, terms
 
 
+class WaveformConstrainedFineTuneLoss(nn.Module):
+    """Fine-tune rare spike waveforms without rewarding threshold occupancy.
+
+    The event objective is symmetric: overshoot, undershoot, early and late
+    voltage are penalized identically.  A frozen baseline prediction can be
+    supplied as ``reference``; outside teacher spike neighbourhoods the loss
+    then applies functional distillation, preserving the already learned
+    subthreshold map.  No class-weighted threshold BCE is used.
+    """
+
+    def __init__(
+        self,
+        state_names: Sequence[str],
+        state_mean: np.ndarray | torch.Tensor,
+        state_std: np.ndarray | torch.Tensor,
+        *,
+        global_weight: float = 1.0,
+        event_state_weight: float = 0.05,
+        waveform_weight: float = 0.20,
+        derivative_weight: float = 0.10,
+        occupancy_weight: float = 0.10,
+        reference_weight: float = 0.25,
+        spike_threshold_mV: float = -20.0,
+        voltage_scale_mV: float = 20.0,
+        occupancy_temperature_mV: float = 2.5,
+        event_radius_steps: int = 20,
+    ) -> None:
+        super().__init__()
+        names = list(state_names)
+        self.soma_index = names.index("soma.v_mV")
+        self.register_buffer("state_mean", torch.as_tensor(state_mean, dtype=torch.float32))
+        self.register_buffer("state_std", torch.as_tensor(state_std, dtype=torch.float32))
+        self.register_buffer("event_scale", torch.tensor(0.0, dtype=torch.float32))
+        self.global_weight = global_weight
+        self.event_state_weight = event_state_weight
+        self.waveform_weight = waveform_weight
+        self.derivative_weight = derivative_weight
+        self.occupancy_weight = occupancy_weight
+        self.reference_weight = reference_weight
+        self.spike_threshold_mV = spike_threshold_mV
+        self.voltage_scale_mV = voltage_scale_mV
+        self.occupancy_temperature_mV = occupancy_temperature_mV
+        self.event_radius_steps = event_radius_steps
+
+    def set_event_scale(self, value: float) -> None:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("event scale must be in [0,1]")
+        self.event_scale.fill_(value)
+
+    def _physical(self, values: torch.Tensor) -> torch.Tensor:
+        return values * self.state_std + self.state_mean
+
+    def _event_mask(self, target_voltage: torch.Tensor) -> torch.Tensor:
+        crossing = torch.zeros_like(target_voltage)
+        crossing[..., 1:] = (
+            (target_voltage[..., :-1] < self.spike_threshold_mV)
+            & (target_voltage[..., 1:] >= self.spike_threshold_mV)
+        ).to(target_voltage.dtype)
+        radius = self.event_radius_steps
+        return F.max_pool1d(
+            crossing.unsqueeze(1), 2 * radius + 1, stride=1, padding=radius
+        ).squeeze(1)
+
+    def forward(
+        self,
+        prediction: torch.Tensor,
+        target: torch.Tensor,
+        reference: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if prediction.shape != target.shape:
+            raise ValueError("prediction and target shapes differ")
+        if reference is not None and reference.shape != prediction.shape:
+            raise ValueError("reference and prediction shapes differ")
+
+        global_loss = F.mse_loss(prediction, target)
+        prediction_physical, target_physical = self._physical(prediction), self._physical(target)
+        pv = prediction_physical[..., self.soma_index]
+        tv = target_physical[..., self.soma_index]
+        event_mask = self._event_mask(tv)
+        event_denominator = event_mask.sum().clamp_min(1.0)
+
+        state_error = (prediction - target).square().mean(-1)
+        event_state = (state_error * event_mask).sum() / event_denominator
+        waveform_error = ((pv - tv) / self.voltage_scale_mV).square()
+        waveform = (waveform_error * event_mask).sum() / event_denominator
+
+        prediction_derivative = (pv[..., 1:] - pv[..., :-1]) / self.voltage_scale_mV
+        target_derivative = (tv[..., 1:] - tv[..., :-1]) / self.voltage_scale_mV
+        derivative_mask = torch.maximum(event_mask[..., 1:], event_mask[..., :-1])
+        derivative = (
+            (prediction_derivative - target_derivative).square() * derivative_mask
+        ).sum() / derivative_mask.sum().clamp_min(1.0)
+
+        predicted_occupancy = torch.sigmoid(
+            (pv - self.spike_threshold_mV) / self.occupancy_temperature_mV
+        )
+        target_occupancy = torch.sigmoid(
+            (tv - self.spike_threshold_mV) / self.occupancy_temperature_mV
+        )
+        occupancy = (
+            (predicted_occupancy - target_occupancy).square() * event_mask
+        ).sum() / event_denominator
+
+        if reference is None:
+            reference_loss = global_loss.new_zeros(())
+        else:
+            non_event_mask = 1.0 - event_mask
+            non_event_denominator = non_event_mask.sum().clamp_min(1.0)
+            reference_error = (prediction - reference.detach()).square().mean(-1)
+            reference_loss = (
+                reference_error * non_event_mask
+            ).sum() / non_event_denominator
+
+        event_loss = (
+            self.event_state_weight * event_state
+            + self.waveform_weight * waveform
+            + self.derivative_weight * derivative
+            + self.occupancy_weight * occupancy
+            + self.reference_weight * reference_loss
+        )
+        total = self.global_weight * global_loss + self.event_scale * event_loss
+        terms = {
+            "global": global_loss,
+            "event_state": event_state,
+            "waveform": waveform,
+            "derivative": derivative,
+            "occupancy": occupancy,
+            "reference": reference_loss,
+            "event": event_loss,
+            "event_scale": self.event_scale.clone(),
+            "event_fraction": event_mask.mean(),
+        }
+        return total, terms
+
+
 @torch.no_grad()
 def replay_gru_gates(model: nn.Module, inputs: torch.Tensor, hidden: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
     """Expose standard PyTorch GRU gates and verifyable hidden trajectories."""

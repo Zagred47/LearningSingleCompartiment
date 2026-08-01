@@ -8,6 +8,7 @@ from hay_single_compartment import (
     MICRO_STATE_NAMES,
     ConservativeSpikeFineTuneLoss,
     EventAwareStateLoss,
+    WaveformConstrainedFineTuneLoss,
     InputOnlyBranchELM,
     InputOnlyCfC,
     InputOnlyConvGRU,
@@ -116,6 +117,45 @@ def test_conservative_spike_finetune_loss_is_amp_safe_and_curriculum_preserves_m
     assert torch.isfinite(total) and torch.isfinite(prediction.grad).all()
     assert total > terms["global"]
     assert 1.0 <= float(terms["positive_weight"]) <= 64.0
+
+
+def test_waveform_constrained_loss_is_symmetric_and_anchors_non_events():
+    mean = np.zeros(len(MICRO_STATE_NAMES), dtype=np.float32)
+    std = np.ones_like(mean)
+    soma = MICRO_STATE_NAMES.index("soma.v_mV")
+    mean[soma] = -70.0
+    criterion = WaveformConstrainedFineTuneLoss(
+        MICRO_STATE_NAMES, mean, std, event_radius_steps=2
+    )
+    target = torch.zeros(1, 20, len(MICRO_STATE_NAMES))
+    target[:, 10, soma] = 80.0
+    reference = torch.zeros_like(target)
+    prediction = reference.clone().requires_grad_(True)
+
+    mse_only, terms = criterion(prediction, target, reference)
+    torch.testing.assert_close(mse_only, terms["global"])
+    criterion.set_event_scale(1.0)
+    total, terms = criterion(prediction, target, reference)
+    total.backward()
+    assert torch.isfinite(total) and torch.isfinite(prediction.grad).all()
+    assert total > terms["global"]
+    assert set(terms) == {
+        "global", "event_state", "waveform", "derivative", "occupancy",
+        "reference", "event", "event_scale", "event_fraction",
+    }
+
+    undershoot = target.clone()
+    overshoot = target.clone()
+    undershoot[:, 10, soma] -= 5.0
+    overshoot[:, 10, soma] += 5.0
+    _, under_terms = criterion(undershoot, target, reference)
+    _, over_terms = criterion(overshoot, target, reference)
+    torch.testing.assert_close(under_terms["waveform"], over_terms["waveform"])
+
+    late_plateau = reference.clone()
+    late_plateau[:, 16:, soma] = 80.0
+    _, plateau_terms = criterion(late_plateau, target, reference)
+    assert plateau_terms["reference"] > 0
 
 
 @pytest.mark.skipif(importlib.util.find_spec("ncps") is None, reason="optional ncps package")

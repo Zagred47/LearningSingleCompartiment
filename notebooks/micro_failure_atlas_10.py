@@ -202,6 +202,19 @@ if dataset_path is None:
     )
 
 checkpoint = _checkpoint_metadata(checkpoint_path)
+dataset_sha256 = sha256_file(dataset_path)
+checkpoint_sha256 = None if checkpoint_path is None else sha256_file(checkpoint_path)
+declared_dataset_sha256 = checkpoint.get("dataset_sha256")
+if declared_dataset_sha256 is None and isinstance(checkpoint.get("dataset_report"), dict):
+    declared_dataset_sha256 = checkpoint["dataset_report"].get("sha256")
+dataset_checkpoint_hash_match = (
+    None if not declared_dataset_sha256 else str(declared_dataset_sha256) == dataset_sha256
+)
+if dataset_checkpoint_hash_match is False:
+    print(
+        "[atlas] WARNING: checkpoint and mounted dataset hashes differ. This can be legitimate "
+        "after a schema migration, but must be reported when interpreting the atlas."
+    )
 activation_diagnostics = None
 activation_rows = None
 analysis_mode = "prediction_archive"
@@ -296,6 +309,9 @@ experiment_card = {
     "training_performed": False,
     "analysis_split": analysis_split,
     "confirmatory_test_consumed": analysis_split == "test",
+    "dataset_sha256": dataset_sha256,
+    "checkpoint_declared_dataset_sha256": declared_dataset_sha256,
+    "dataset_checkpoint_hash_match": dataset_checkpoint_hash_match,
     "decision": "review_atlas_before_preregistering_the_next_ablation",
 }
 (OUTPUT_DIR / "experiment_card_FA-00.json").write_text(
@@ -311,9 +327,11 @@ provenance = {
     "repository": str(REPO_ROOT),
     "git_commit": _git_commit(),
     "dataset": str(dataset_path),
-    "dataset_sha256": sha256_file(dataset_path),
+    "dataset_sha256": dataset_sha256,
     "checkpoint": None if checkpoint_path is None else str(checkpoint_path),
-    "checkpoint_sha256": None if checkpoint_path is None else sha256_file(checkpoint_path),
+    "checkpoint_sha256": checkpoint_sha256,
+    "checkpoint_declared_dataset_sha256": declared_dataset_sha256,
+    "dataset_checkpoint_hash_match": dataset_checkpoint_hash_match,
     "prediction_archive": str(prediction_path) if analysis_mode == "prediction_archive" else None,
     "prediction_archive_sha256": sha256_file(prediction_path)
     if analysis_mode == "prediction_archive" and prediction_path is not None else None,

@@ -191,6 +191,10 @@ larghe osservate nell'esperimento 06.
 decomposizione Mixture-of-Experts standard: GRU lenta congelata e TCN rapido
 moltiplicato da un gate causale sparso, supervisionato con focal loss.
 
+`notebooks/kaggle_micro_state_information_probe_09.ipynb` è il successivo
+diagnostico controllato: confronta hidden GRU e stato fisico precedente con gli
+stessi probe, prima di introdurre eventualmente feedback autoregressivo.
+
 ## API essenziale
 
 ```python

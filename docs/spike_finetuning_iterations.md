@@ -193,7 +193,7 @@ The narrow mask therefore closes part of the loss loophole but does not make a
 single continuous residual regressor choose an impulse.  This falsifies the
 "same architecture, stricter support" hypothesis.
 
-## Iteration 08: sparse gated residual TCN (Kaggle candidate)
+## Iteration 08: sparse gated residual TCN (rejected)
 
 The next justified established architecture is a gated residual
 Mixture-of-Experts:
@@ -211,3 +211,39 @@ Mixture-of-Experts:
 This tests the stronger abstract hypothesis that the process is locally
 regime-switching: a slow continuous map plus a sparse fast transition, rather
 than one homogeneous smooth map.
+
+### Iteration 08 result: router signal present, fast expert still fails
+
+The selector retained epoch 0.  The last test candidate predicted only 2 spikes
+and matched 1/136 (F1 `0.0145`), with soma RMSE `4.991 mV` and subthreshold RMSE
+`1.875 mV`.  No validation epoch was admissible; epoch 1 already violated the
+slow-state constraint, and later epochs violated subthreshold fidelity.
+
+Read-only inference on the held-out real preflight subset separates the two
+components:
+
+- mean gate probability is `0.811` inside the teacher support and `0.068`
+  outside;
+- at threshold 0.5, support recall is `0.887`, but precision is only `0.165`;
+- the gate therefore contains a useful but overly broad event signal;
+- at the true spike core, the complete model predicts about `-46 mV` while the
+  teacher is near `0 mV`;
+- the learned soma correction has correlation only `0.011` with the required
+  baseline residual.
+
+The router is not the main amplitude bottleneck.  The input-only fast expert
+cannot reconstruct the physical phase from the shared representation.
+
+## Iteration 09: previous-state information probe (Kaggle diagnostic)
+
+Before authorizing autoregressive feedback, identical standard linear and MLP
+probes compare two feature contracts:
+
+1. frozen GRU hidden after the current input plus packed spike input;
+2. previous true normalized 61-state vector plus the same packed spike input.
+
+Both spike-support classification and conditional soma-residual regression are
+evaluated on untouched natural validation/test priors.  Teacher state is used
+only in the oracle diagnostic arm and is never presented as a deployable model.
+A large state-arm advantage would directly justify a neural state-space model
+with predicted-state feedback; parity would falsify that hypothesis.

@@ -227,6 +227,14 @@ tutte le celle e il test rimane chiuso. L'output è uno ZIP piccolo con tabelle,
 figure, convergenza degli stimatori e una decisione provvisoria da revisionare
 prima di `DG-02`.
 
+`notebooks/kaggle_micro_activation_gradient_atlas_13.ipynb` esegue `DG-02`
+sullo stesso manifest esportato da DG-01. Richiede dataset HDF5, factorial-11 e
+ZIP DG-01. Espone attivazioni, gate GRU, rango effettivo e gradienti interni e
+usa probe ridge lineari fortemente regolarizzati con holdout per traiettoria per
+separare supporto generale dell'evento, fase esatta e residuo di ampiezza. I
+target fisici sono usati soltanto come etichette diagnostiche e non entrano nei
+modelli congelati.
+
 ## API essenziale
 
 ```python

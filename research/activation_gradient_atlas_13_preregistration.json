@@ -1,0 +1,43 @@
+{
+  "experiment_id": "DG-02",
+  "artifact_name": "hay_micro_activation_gradient_atlas_13_complete.zip",
+  "status": "preregistered",
+  "mode": "frozen_checkpoint_representation_diagnostic",
+  "hypotheses_tested": ["H-REP-01", "H-REP-02", "H-STATE-01"],
+  "frozen_inputs": {
+    "dataset_sha256": "1fd0eaf7ffc6bbd5e8eb2db64ba4bcc67289048ef0be9367760088ff1739a3bf",
+    "checkpoint_runs": ["gru_mse", "gru_mrstft", "causal_conv_gru_mse", "causal_conv_gru_mrstft"],
+    "dg01_manifest_sha256": "19da693936a75ab6cfb00358416db1e130477400afdea1007b40b156e4783971",
+    "split": "validation",
+    "test_split": "closed"
+  },
+  "measurements": [
+    "activation distribution and saturation by layer and sampling view",
+    "GRU reset/update/candidate trajectories and effective retention-time proxy",
+    "effective rank and participation ratio by representation and view",
+    "trajectory-held-out linear probes for event support, exact phase and voltage residual",
+    "activation-gradient norm and sparsity at hidden and decoder layers",
+    "gate replay numerical identity"
+  ],
+  "probe_control": {
+    "family": "linear ridge",
+    "ridge_alpha": 100.0,
+    "selection": "fixed before Kaggle execution; no validation hyperparameter search",
+    "feature_scaling": "training trajectories only within each outer fold",
+    "outer_evaluation": "leave one validation trajectory out",
+    "duplicate_policy": "remove repeated trajectory/time coordinates before fitting"
+  },
+  "decision_rules": {
+    "readout_branch": "hidden phase correlation >=0.5 and held-out event residual RMSE improves >=20%, while decoder representation loses either capability",
+    "objective_exposure_branch": "hidden and decoder retain phase/amplitude capability; DG-01 then authorizes the sampler x balanced-objective factorial",
+    "information_contract_branch": "hidden phase correlation <0.2 and event residual improvement <5% across checkpoint families despite broad-support AUROC >=0.7",
+    "inconclusive": "capability changes sign across held-out trajectories or probe sample support is insufficient"
+  },
+  "guardrails": [
+    "no teacher state enters any frozen model",
+    "teacher voltage and spikes are probe labels only",
+    "probe evaluation is held out by trajectory",
+    "duplicate overlapping manifest coordinates are removed before probing",
+    "no test trajectory and no checkpoint optimizer update"
+  ]
+}

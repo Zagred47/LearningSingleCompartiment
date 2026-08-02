@@ -26,6 +26,7 @@ reasoning history.
 | `qualitative_observation_template.json` | structured conversion of a plot observation into a testable signature |
 | `source_refresh_state.json` | mandatory reread cadence for the 15 original methodology documents |
 | `loss_landscape_observatory_12_preregistration.json` | frozen DG-01 measurements, thresholds and guardrails |
+| `activation_gradient_atlas_13_preregistration.json` | frozen DG-02 representation probes and decision rules |
 
 JSON and CSV files are canonical. The workbook and Markdown documents are
 views. They must never become independent stores of unrecorded decisions.

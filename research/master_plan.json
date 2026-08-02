@@ -247,8 +247,8 @@
     }
   ],
   "current_next_actions": [
-    "Run DG-01 Loss Landscape Observatory on the four factorial checkpoints.",
-    "Run DG-02 Activation and Gradient Atlas on the same frozen validation batches.",
-    "Choose TR-01, LO-02, LO-04, SR-01 or the capability bench from the diagnostic signatures; do not choose by preference."
+    "Run DG-02 Activation and Gradient Atlas on the exact DG-01 validation manifest.",
+    "Use trajectory-held-out phase/amplitude probes to distinguish objective/exposure failure from information-contract failure.",
+    "If phase and amplitude are accessible, preregister a sampler x balanced-objective factorial; if absent, choose SR-01 or the capability bench rather than another loss."
   ]
 }

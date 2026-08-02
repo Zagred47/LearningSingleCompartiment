@@ -70,6 +70,128 @@ class InputOnlyGRU(nn.Module):
         return None if hidden is None else hidden.detach()
 
 
+class StateContextGRU(nn.Module):
+    """Standard GRUCell with a controlled normalized physical-state channel.
+
+    ``mode`` is the only experimental factor:
+
+    - ``none`` always supplies zeros on the state channel;
+    - ``initial_only`` supplies the caller's state only on the first step;
+    - ``predicted_feedback`` supplies the first state once, then recursively
+      supplies the model's own previous normalized prediction.
+
+    No mode consumes a teacher state after trajectory initialization.  All
+    modes instantiate exactly the same trainable modules and parameter count.
+    """
+
+    architecture = "standard_gru_controlled_state_context"
+    valid_modes = ("none", "initial_only", "predicted_feedback")
+
+    def __init__(
+        self,
+        input_dim: int,
+        state_dim: int,
+        hidden_dim: int = 200,
+        decoder_dim: int | None = None,
+        mode: str = "none",
+    ) -> None:
+        super().__init__()
+        if mode not in self.valid_modes:
+            raise ValueError(f"mode must be one of {self.valid_modes}, got {mode!r}")
+        self.input_dim = input_dim
+        self.state_dim = state_dim
+        self.hidden_dim = hidden_dim
+        self.mode = mode
+        self.input_encoder = nn.Sequential(
+            nn.Linear(input_dim + state_dim, hidden_dim), nn.SiLU()
+        )
+        self.recurrent = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
+        self.decoder = StateDecoder(hidden_dim, state_dim, decoder_dim)
+
+    def _gru_step(self, encoded: torch.Tensor, hidden: torch.Tensor) -> torch.Tensor:
+        """Execute the exact one-layer PyTorch GRU equations for feedback mode."""
+        input_terms = F.linear(
+            encoded, self.recurrent.weight_ih_l0, self.recurrent.bias_ih_l0
+        )
+        hidden_terms = F.linear(
+            hidden, self.recurrent.weight_hh_l0, self.recurrent.bias_hh_l0
+        )
+        input_reset, input_update, input_candidate = input_terms.chunk(3, dim=-1)
+        hidden_reset, hidden_update, hidden_candidate = hidden_terms.chunk(3, dim=-1)
+        reset = torch.sigmoid(input_reset + hidden_reset)
+        update = torch.sigmoid(input_update + hidden_update)
+        candidate = torch.tanh(input_candidate + reset * hidden_candidate)
+        return (1.0 - update) * candidate + update * hidden
+
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        hidden: tuple[torch.Tensor, torch.Tensor] | None = None,
+        initial_state: torch.Tensor | None = None,
+        timespans: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        del timespans
+        if inputs.ndim != 3 or inputs.shape[-1] != self.input_dim:
+            raise ValueError(
+                f"inputs must have shape [batch,time,{self.input_dim}], got {tuple(inputs.shape)}"
+            )
+        batch = inputs.shape[0]
+        first_call = hidden is None
+        if first_call:
+            recurrent_hidden = inputs.new_zeros(batch, self.hidden_dim)
+            if initial_state is None:
+                state_context = inputs.new_zeros(batch, self.state_dim)
+            else:
+                if initial_state.shape != (batch, self.state_dim):
+                    raise ValueError(
+                        "initial_state must have shape "
+                        f"{(batch, self.state_dim)}, got {tuple(initial_state.shape)}"
+                    )
+                state_context = initial_state
+        else:
+            if initial_state is not None:
+                raise ValueError("initial_state may only be supplied when hidden is None")
+            recurrent_hidden, state_context = hidden
+
+        zero_context = inputs.new_zeros(batch, self.state_dim)
+        if self.mode != "predicted_feedback":
+            contexts = inputs.new_zeros(batch, inputs.shape[1], self.state_dim)
+            if self.mode == "initial_only" and first_call and inputs.shape[1]:
+                contexts[:, 0] = state_context
+            encoded = self.input_encoder(torch.cat((inputs, contexts), dim=-1))
+            sequence, recurrent_sequence_hidden = self.recurrent(
+                encoded, recurrent_hidden.unsqueeze(0)
+            )
+            prediction = self.decoder(sequence)
+            return prediction, (recurrent_sequence_hidden[0], zero_context)
+
+        outputs = []
+        for step in range(inputs.shape[1]):
+            encoded = self.input_encoder(
+                torch.cat((inputs[:, step], state_context), dim=-1)
+            )
+            recurrent_hidden = self._gru_step(encoded, recurrent_hidden)
+            prediction = self.decoder(recurrent_hidden)
+            outputs.append(prediction)
+            state_context = prediction
+        if outputs:
+            sequence = torch.stack(outputs, dim=1)
+        else:
+            sequence = inputs.new_empty(batch, 0, self.state_dim)
+        return sequence, (recurrent_hidden, state_context)
+
+    def decode_hidden(self, hidden: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        return self.decoder(hidden[0])
+
+    @staticmethod
+    def detach_hidden(
+        hidden: tuple[torch.Tensor, torch.Tensor] | None,
+    ) -> tuple[torch.Tensor, torch.Tensor] | None:
+        if hidden is None:
+            return None
+        return tuple(value.detach() for value in hidden)
+
+
 class _CausalConvRecurrent(nn.Module):
     """Causal temporal Conv1d front-end followed by a standard GRU or LSTM."""
 

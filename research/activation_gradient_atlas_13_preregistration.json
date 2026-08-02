@@ -1,7 +1,7 @@
 {
   "experiment_id": "DG-02",
   "artifact_name": "hay_micro_activation_gradient_atlas_13_complete.zip",
-  "status": "preregistered",
+  "status": "completed",
   "mode": "frozen_checkpoint_representation_diagnostic",
   "hypotheses_tested": ["H-REP-01", "H-REP-02", "H-STATE-01"],
   "frozen_inputs": {

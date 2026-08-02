@@ -247,8 +247,8 @@
     }
   ],
   "current_next_actions": [
-    "Run DG-02 Activation and Gradient Atlas on the exact DG-01 validation manifest.",
-    "Use trajectory-held-out phase/amplitude probes to distinguish objective/exposure failure from information-contract failure.",
-    "If phase and amplitude are accessible, preregister a sampler x balanced-objective factorial; if absent, choose SR-01 or the capability bench rather than another loss."
+    "DG-02 selected the information-contract/scaffold branch: broad event support is represented but exact phase and amplitude are not linearly accessible.",
+    "Run the one-seed SR-01 preflight with parameter-identical standard GRUs: no state context, initialization-only state, and own predicted-state feedback.",
+    "If recursive predicted-state feedback clears event and common-regime guardrails, replicate it across three seeds; otherwise close that contract branch and enter the capability bench before screening broader scaffolds."
   ]
 }

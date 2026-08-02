@@ -18,9 +18,14 @@ flowchart TB
   O9 --> HE
   O10[O-010 conflict block-specific] -->|weakens universal claim| HO
   O11[O-011 event loss barely changes on training path] --> HB{{H-OPT-02 basin open}}
+  O12[O-012 broad event support decodable] --> HR1
+  O13[O-013 exact phase and amplitude inaccessible] -->|weakens| HR2
+  O13 --> HS
+  O14[O-014 latent manifold strongly compressed] --> HS
+  O15[O-015 event activation gradients alive] -->|weakens dead-gradient account| HO
   DG1[DG-01 Landscape Observatory] --> HL2
   DG1 --> HO
-  DG2[DG-02 Activation Atlas] --> HR1
+  DG2[DG-02 Activation Atlas completed] --> HR1
   DG2 --> HR2
   TR[TR-01 matched exposure] --> HE
   BM[LO-02 Balanced MSE] --> HL2

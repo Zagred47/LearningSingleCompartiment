@@ -4,7 +4,7 @@
   "source_index": "research/methodology_source_index.json",
   "source_count": 15,
   "last_full_review_utc": "2026-08-02",
-  "last_full_review_reason": "methodology restoration after context compaction",
+  "last_full_review_reason": "mandatory reread after context compaction before interpreting DG-02 and selecting the next causal branch",
   "mandatory_triggers": [
     "after any conversation-context compaction or reconstructed session",
     "before entering a new research-program phase",
@@ -24,5 +24,8 @@
     "The Physics of Models method requires behavior probes and internal or mental probes together.",
     "Architecture creation uses constrained recombination, multiple sketches, hit selection and mechanism deconvolution.",
     "Qualitative plot observations must be preserved because aggregate statistics can erase failure morphology."
+    ,"A positive probe establishes decodability, not causal use; a negative restricted probe does not establish total information absence."
+    ,"Information presentation can determine learnability even when a solution exists in the nominal function class."
+    ,"A component that computes a useful intermediate feature may still fail as part of a larger scaffold because later stages erase or fail to use it."
   ]
 }

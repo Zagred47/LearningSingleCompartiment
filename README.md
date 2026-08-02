@@ -235,6 +235,16 @@ separare supporto generale dell'evento, fase esatta e residuo di ampiezza. I
 target fisici sono usati soltanto come etichette diagnostiche e non entrano nei
 modelli congelati.
 
+`notebooks/kaggle_micro_state_feedback_preflight_14.ipynb` esegue quindi
+`SR-01`. Addestra tre GRU standard con parametri, pesi iniziali, loss, sampler e
+numero di update identici. Il solo fattore Ã¨ il canale di stato: sempre nullo,
+vero solo al primo passo della traiettoria, oppure alimentato ricorsivamente
+dalla previsione del modello. Non viene mai usato teacher forcing dopo
+l'inizializzazione e le finestre stratificate ricostruiscono il contesto dal
+principio della traiettoria. Il test resta chiuso; di default lo ZIP leggero
+esclude i checkpoint di resume, che possono essere inclusi impostando
+`HAY_SR01_DOWNLOAD_CHECKPOINTS=1`.
+
 ## API essenziale
 
 ```python

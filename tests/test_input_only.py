@@ -17,12 +17,48 @@ from hay_single_compartment import (
     InputOnlyGRU,
     InputOnlyGatedResidualTCN,
     InputOnlyResidualTCN,
+    StateContextGRU,
     MicroEventConfig,
     StratifiedWindowSampler,
     SpikeGateFocalLoss,
     classify_micro_events,
     replay_gru_gates,
 )
+
+
+def test_state_context_gru_is_parameter_matched_and_chunk_equivalent():
+    torch.manual_seed(11)
+    reference = StateContextGRU(6, 4, hidden_dim=9, decoder_dim=7, mode="none")
+    models = {}
+    for mode in StateContextGRU.valid_modes:
+        model = StateContextGRU(6, 4, hidden_dim=9, decoder_dim=7, mode=mode)
+        model.load_state_dict(reference.state_dict())
+        models[mode] = model
+    assert len({sum(p.numel() for p in model.parameters()) for model in models.values()}) == 1
+
+    inputs = torch.randn(2, 8, 6)
+    initial = torch.randn(2, 4)
+    for model in models.values():
+        full, full_hidden = model(inputs, initial_state=initial)
+        first, hidden = model(inputs[:, :3], initial_state=initial)
+        second, chunk_hidden = model(inputs[:, 3:], hidden)
+        torch.testing.assert_close(torch.cat((first, second), dim=1), full)
+        torch.testing.assert_close(chunk_hidden[0], full_hidden[0])
+        torch.testing.assert_close(chunk_hidden[1], full_hidden[1])
+
+    initial_output, _ = models["initial_only"](inputs, initial_state=initial)
+    feedback_output, _ = models["predicted_feedback"](inputs, initial_state=initial)
+    torch.testing.assert_close(initial_output[:, :1], feedback_output[:, :1])
+    assert not torch.allclose(initial_output[:, 1:], feedback_output[:, 1:])
+
+
+def test_state_context_gru_rejects_teacher_reinjection_after_initialization():
+    model = StateContextGRU(6, 4, hidden_dim=5, mode="predicted_feedback")
+    inputs = torch.randn(2, 3, 6)
+    initial = torch.randn(2, 4)
+    _, hidden = model(inputs[:, :1], initial_state=initial)
+    with pytest.raises(ValueError, match="only be supplied"):
+        model(inputs[:, 1:], hidden, initial_state=initial)
 
 
 def test_residual_tcn_starts_as_exact_frozen_gru_and_is_chunk_equivalent():

@@ -1,0 +1,65 @@
+{
+  "experiment_id": "SR-01",
+  "artifact_name": "hay_micro_state_feedback_preflight_14_complete.zip",
+  "status": "preregistered",
+  "promotion_level": "L1_preflight",
+  "primary_axis": "information_contract",
+  "hypothesis_tested": "H-STATE-01",
+  "frozen_inputs": {
+    "dataset_sha256": "1fd0eaf7ffc6bbd5e8eb2db64ba4bcc67289048ef0be9367760088ff1739a3bf",
+    "split_for_selection": "validation",
+    "test_split": "closed",
+    "seed": 20260803,
+    "objective": "normalized physical-state MSE",
+    "sampler": "identical natural trajectory chunks plus identical event-stratified windows"
+  },
+  "arms": [
+    {
+      "name": "no_state_context",
+      "contract": "the physical-state channel is always zero"
+    },
+    {
+      "name": "initial_state_only",
+      "contract": "true normalized state enters once at the first burn-in step and is zero thereafter"
+    },
+    {
+      "name": "predicted_state_feedback",
+      "contract": "the same true initial state enters once, followed only by the model's own previous normalized prediction"
+    }
+  ],
+  "causal_control": {
+    "primary_comparison": "predicted_state_feedback versus initial_state_only",
+    "initialization_control": "initial_state_only versus no_state_context",
+    "parameter_modules": "identical Linear + SiLU + standard GRUCell + LayerNorm/Linear/SiLU/Linear decoder",
+    "initial_weights": "bit-identical across arms",
+    "updates": "identical maximum optimizer-update schedule",
+    "teacher_forcing_after_initialization": false
+  },
+  "primary_metric": "validation spike recall",
+  "secondary_metrics": [
+    "validation event soma RMSE",
+    "validation peak amplitude error",
+    "validation high-frequency power ratio",
+    "validation mean and worst state NRMSE",
+    "slow and synaptic state NRMSE",
+    "subthreshold soma RMSE",
+    "trajectory rollout traces"
+  ],
+  "preflight_success_rule": {
+    "event_requirement": "predicted feedback produces at least one matched validation spike and improves event soma RMSE by at least 20 percent versus initial_state_only",
+    "guardrails": "mean, slow, synaptic and subthreshold errors are each no worse than 110 percent of initial_state_only",
+    "replication": "success authorizes a fresh three-seed capacity-matched replication; it is not itself a scientific claim"
+  },
+  "failure_rules": [
+    "zero matched spikes and less than 10 percent event-RMSE improvement closes direct predicted-state feedback as an immediate remedy",
+    "event improvement with any common-regime guardrail above 110 percent is a trade-off and does not promote",
+    "an initialization-only gain without an additional feedback gain supports initial observability, not recursive feedback"
+  ],
+  "guardrails": [
+    "teacher state enters at most once per complete trajectory",
+    "stratified-window context is replayed from the true trajectory beginning rather than initialized from a teacher state at the window boundary",
+    "no test data",
+    "no loss, optimizer, sampler, width or update-count change across arms",
+    "checkpoint selection uses validation event soma RMSE only"
+  ]
+}

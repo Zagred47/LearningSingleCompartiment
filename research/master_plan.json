@@ -1,0 +1,228 @@
+{
+  "program_id": "HAY-MICRO-ARCH-DISCOVERY",
+  "version": "1.0.0",
+  "updated_utc": "2026-08-02",
+  "objective": "Discover a data-efficient surrogate architecture for the 61-state four-compartment micro-Hay system while learning which abstract properties of the causal dynamics are supported by controlled experiments.",
+  "current_teacher": {
+    "name": "micro-Hay four-compartment teacher",
+    "dataset_sha256": "1fd0eaf7ffc6bbd5e8eb2db64ba4bcc67289048ef0be9367760088ff1739a3bf",
+    "inputs": "24 binary presynaptic event channels packed over five 0.1 ms microsteps",
+    "outputs": "61 physical states",
+    "network_dt_ms": 0.5,
+    "test_policy": "closed until one candidate, seeds and decision rule are locked"
+  },
+  "finite_budget": {
+    "core_notebook_ceiling": 36,
+    "conditional_notebook_ceiling": 12,
+    "total_notebook_ceiling": 48,
+    "maximum_consecutive_same_failure_signature": 2,
+    "preflight_seeds": 1,
+    "claim_seeds_minimum": 3,
+    "test_evaluations_before_final_lock": 0
+  },
+  "global_stop_rules": [
+    "Close a branch after two consecutive experiments reproduce the same falsifying signature without adding a new causal distinction.",
+    "Do not scale width, depth, epochs or dataset size before the proposed inductive bias passes a capacity-matched preflight.",
+    "Do not change more than one primary causal factor unless the experiment is an explicitly preregistered factorial interaction test.",
+    "Do not open the test split during discovery.",
+    "Do not promote a result explained only by more parameters, optimizer updates or privileged teacher information.",
+    "Do not run an experiment that cannot name the knowledge-ledger entry it may update."
+  ],
+  "promotion_ladder": [
+    {
+      "level": "L0_diagnostic",
+      "requirement": "read-only checkpoint analysis or synthetic capability probe",
+      "seeds": 0,
+      "authorizes": "one preregistered preflight"
+    },
+    {
+      "level": "L1_preflight",
+      "requirement": "signature-specific improvement and all guardrails on validation",
+      "seeds": 1,
+      "authorizes": "capacity-matched replication"
+    },
+    {
+      "level": "L2_replication",
+      "requirement": "median improvement across at least three seeds with uncertainty reported",
+      "seeds": 3,
+      "authorizes": "data-efficiency and scaling study"
+    },
+    {
+      "level": "L3_confirmation",
+      "requirement": "candidate, seed protocol and thresholds frozen before one test evaluation",
+      "seeds": 3,
+      "authorizes": "confirmatory claim"
+    }
+  ],
+  "phases": [
+    {
+      "phase_id": "P0",
+      "name": "Integrity and governance",
+      "status": "completed",
+      "notebook_budget": 2,
+      "purpose": "Make every result causal, reproducible and auditable.",
+      "entry_criteria": [],
+      "deliverables": [
+        "frozen data contract and runtime SHA-256",
+        "trajectory-disjoint split policy",
+        "experiment card and registry",
+        "knowledge and hypothesis ledgers",
+        "automated cross-reference validation"
+      ],
+      "exit_criteria": [
+        "all canonical files validate",
+        "test split is closed",
+        "every active experiment has a preregistration"
+      ],
+      "experiment_ids": ["GOV-00", "GOV-01"]
+    },
+    {
+      "phase_id": "P1",
+      "name": "Baseline observatory",
+      "status": "active",
+      "notebook_budget": 4,
+      "purpose": "Separate output failure, representation failure and optimization failure before changing a model.",
+      "entry_criteria": ["valid baseline checkpoint", "validation-only replay"],
+      "deliverables": [
+        "Failure Atlas",
+        "Loss Landscape Observatory",
+        "Activation and Gradient Atlas",
+        "regime-specific gradient conflict matrix"
+      ],
+      "exit_criteria": [
+        "dominant residual signature recorded",
+        "optimization and representation hypotheses ranked",
+        "next causal axis selected without using test"
+      ],
+      "experiment_ids": ["FA-00", "DG-01", "DG-02"]
+    },
+    {
+      "phase_id": "P2",
+      "name": "Capability bench",
+      "status": "planned",
+      "notebook_budget": 4,
+      "purpose": "Test established layers on isolated algorithmic capabilities before full-teacher training.",
+      "entry_criteria": ["P1 dominant signatures"],
+      "deliverables": [
+        "slow integration benchmark",
+        "threshold and hysteresis benchmark",
+        "fast-slow switching benchmark",
+        "four-node propagation benchmark"
+      ],
+      "exit_criteria": [
+        "each scaffold has a capability signature",
+        "architectures that fail their required microtask are pruned"
+      ],
+      "experiment_ids": ["CB-01", "CB-02", "CB-03", "CB-04"]
+    },
+    {
+      "phase_id": "P3",
+      "name": "Objective and exposure",
+      "status": "planned",
+      "notebook_budget": 7,
+      "purpose": "Determine whether rare-transition collapse is caused by target imbalance, loss geometry or rollout mismatch.",
+      "entry_criteria": ["DG-01 gradient evidence"],
+      "deliverables": [
+        "balanced exposure control",
+        "Balanced MSE comparison",
+        "multi-step rollout objective",
+        "state-family gradient conflict treatment"
+      ],
+      "exit_criteria": [
+        "loss and sampling effects separated",
+        "at least one objective retained or objective branch closed"
+      ],
+      "experiment_ids": ["LO-01", "TR-01", "LO-02", "LO-03", "LO-04"]
+    },
+    {
+      "phase_id": "P4",
+      "name": "Scaffold screen",
+      "status": "planned",
+      "notebook_budget": 10,
+      "purpose": "Compare established causal operators under matched capacity and training.",
+      "entry_criteria": ["P1 diagnostics", "P2 capability signatures"],
+      "deliverables": [
+        "state-feedback baseline",
+        "recurrent family screen",
+        "state-space family screen",
+        "continuous-time family screen"
+      ],
+      "exit_criteria": [
+        "one global scaffold promoted",
+        "each rejected scaffold has a scoped falsification claim"
+      ],
+      "experiment_ids": ["SC-01", "SR-01", "SC-02", "SC-03", "SC-04", "SC-05", "SC-06", "SC-07"]
+    },
+    {
+      "phase_id": "P5",
+      "name": "Spatial and regime composition",
+      "status": "planned",
+      "notebook_budget": 7,
+      "purpose": "Test whether four-compartment coupling and rare transitions benefit from standard modular structure.",
+      "entry_criteria": ["promoted global scaffold", "evidence of separable spatial or regime structure"],
+      "deliverables": [
+        "message-passing control",
+        "switching or mixture-of-experts control",
+        "slow-fast multirate control",
+        "monolithic parameter-matched control"
+      ],
+      "exit_criteria": [
+        "only modules with independent evidence remain",
+        "composition gain exceeds monolithic capacity control"
+      ],
+      "experiment_ids": ["SP-01", "SP-02", "HY-01", "HY-02", "CP-01"]
+    },
+    {
+      "phase_id": "P6",
+      "name": "Conditional interventions",
+      "status": "conditional",
+      "notebook_budget": 8,
+      "purpose": "Change activation, normalization, optimizer or regularization only when a measured indicator predicts a specific signature.",
+      "entry_criteria": ["diagnostic trigger in indicator_catalog.json"],
+      "deliverables": [
+        "single-axis activation ablation",
+        "invertible scaling ablation",
+        "regularization ablation",
+        "optimizer ablation"
+      ],
+      "exit_criteria": ["trigger resolved or branch closed"],
+      "experiment_ids": ["AC-01", "NM-01", "RG-01", "OP-01"]
+    },
+    {
+      "phase_id": "P7",
+      "name": "Evidence-guided synthesis",
+      "status": "planned",
+      "notebook_budget": 4,
+      "purpose": "Compose only modules that have independently demonstrated required capabilities.",
+      "entry_criteria": ["at least two promoted and complementary mechanisms"],
+      "deliverables": [
+        "composite architecture",
+        "module ablations",
+        "parameter-matched monolithic control"
+      ],
+      "exit_criteria": ["composition provides non-additive gain without guardrail failure"],
+      "experiment_ids": ["SY-01", "SY-02"]
+    },
+    {
+      "phase_id": "P8",
+      "name": "Replication, efficiency and confirmation",
+      "status": "planned",
+      "notebook_budget": 4,
+      "purpose": "Turn a discovery result into a bounded confirmatory claim.",
+      "entry_criteria": ["L1 candidate frozen"],
+      "deliverables": [
+        "three-seed replication",
+        "data-efficiency curves",
+        "long-rollout and OOD stress tests",
+        "single test-set evaluation"
+      ],
+      "exit_criteria": ["claim confirmed, weakened or falsified"],
+      "experiment_ids": ["CF-01", "CF-02", "CF-03"]
+    }
+  ],
+  "current_next_actions": [
+    "Run DG-01 Loss Landscape Observatory on the four factorial checkpoints.",
+    "Run DG-02 Activation and Gradient Atlas on the same frozen validation batches.",
+    "Choose TR-01, LO-02, LO-04, SR-01 or the capability bench from the diagnostic signatures; do not choose by preference."
+  ]
+}

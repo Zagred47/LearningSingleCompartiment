@@ -2,11 +2,19 @@
   "experiment_id": "",
   "created_utc": "",
   "status": "preregistered",
+  "program_phase": "",
+  "hypothesis_ids": [],
+  "knowledge_ids_to_update": [],
   "question": "",
   "hypothesis": "",
   "expected_signature_if_supported": [],
   "expected_signature_if_falsified": [],
   "single_primary_factor": "",
+  "information_contract": {
+    "available_at_t0": [],
+    "available_each_step": [],
+    "forbidden_teacher_information": []
+  },
   "baseline": {
     "name": "",
     "checkpoint_sha256": "",
@@ -37,6 +45,14 @@
     "reject": "",
     "inconclusive": ""
   },
+  "diagnostic_triggers": [],
+  "expected_artifacts": {
+    "metrics": "",
+    "figures": "",
+    "checkpoints": "",
+    "batch_manifest": "",
+    "environment_manifest": ""
+  },
   "post_run": {
     "completed_utc": null,
     "commit": null,
@@ -45,6 +61,10 @@
     "decision": null,
     "claim_supported": null,
     "alternative_explanations": [],
-    "next_orthogonal_test": null
+    "next_orthogonal_test": null,
+    "knowledge_entries_updated": [],
+    "hypothesis_status_changes": [],
+    "registry_synchronized": false,
+    "branch_stop_or_continue_reason": null
   }
 }

@@ -1,5 +1,7 @@
 # Protocollo di scoperta architetturale per il micro-Hay
 
+> Punto di ingresso operativo: [`research_operating_system.md`](research_operating_system.md). Master plan, knowledge ledger, grafo, cataloghi e registri machine-readable vivono in [`research/`](../research/README.md). Questo documento definisce i principi; l'operating system definisce stato e ordine di esecuzione.
+
 ## Obiettivo
 
 Non cerchiamo una successione di modifiche che abbassi casualmente una metrica.

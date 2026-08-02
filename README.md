@@ -1,5 +1,7 @@
 # Hay Single Compartment
 
+> **Programma di ricerca attuale:** il master plan finito, il grafo delle ipotesi, i registri delle evidenze e i protocolli operativi partono da [`docs/research_operating_system.md`](docs/research_operating_system.md). Lo stato sintetico è in [`docs/current_research_state.md`](docs/current_research_state.md).
+
 Un singolo compartimento conduttanza-based, ispirato ai meccanismi del neurone
 L5PC di Hay, pensato per generare dataset sequenziali piccoli e confrontare
 surrogati neurali come MLP, RNN, GRU, LSTM e una ConvLSTM temporale capiente.

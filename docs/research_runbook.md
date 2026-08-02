@@ -1,5 +1,15 @@
 # Research runbook
 
+## Original-source refresh
+
+The compact repository documentation does not replace the 15 original
+methodology documents. Read every source indexed by
+`research/methodology_source_index.json` after any context compaction, before a
+new research phase or architecture-sketch cycle, and after every four completed
+core experiments. Verify the hashes and update
+`research/source_refresh_state.json`. If one source cannot be recovered, do not
+invent the missing methodological detail.
+
 ## Before
 
 1. Select one open hypothesis and the knowledge entries the run may change.

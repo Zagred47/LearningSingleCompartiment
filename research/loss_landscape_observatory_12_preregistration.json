@@ -1,0 +1,50 @@
+{
+  "experiment_id": "DG-01",
+  "artifact_name": "hay_micro_loss_landscape_12_complete.zip",
+  "status": "preregistered",
+  "mode": "read_only_validation_diagnostic",
+  "hypotheses_tested": ["H-LOSS-02", "H-OPT-01", "H-OPT-02"],
+  "frozen_inputs": {
+    "dataset_sha256": "1fd0eaf7ffc6bbd5e8eb2db64ba4bcc67289048ef0be9367760088ff1739a3bf",
+    "checkpoint_runs": [
+      "gru_mse",
+      "gru_mrstft",
+      "causal_conv_gru_mse",
+      "causal_conv_gru_mrstft"
+    ],
+    "split": "validation",
+    "test_split": "closed",
+    "window_manifest": "one deterministic manifest shared by every checkpoint and diagnostic"
+  },
+  "primary_measurements": [
+    "loss and gradient norm by regime and parameter block",
+    "across-window gradient signal-to-noise ratio",
+    "pairwise gradient cosine by regime and block",
+    "event-bin and event-targeted optimizer-update prevalence",
+    "target-density versus conditional error",
+    "filter-normalized local two-dimensional surfaces",
+    "initial-to-final and paired-objective interpolation",
+    "Hessian top eigenvalue with power-iteration residual",
+    "Hutchinson trace with standard error"
+  ],
+  "interpretation_rules": {
+    "TR-01": "event-targeted update share below 5% and event-gradient SNR remains usable",
+    "LO-04": "stable median event-versus-slow or event-versus-synaptic gradient cosine below -0.10",
+    "LO-02": "rarer target-voltage bins show larger errors while event gradients remain usable",
+    "DG-02": "event-gradient SNR or event-to-natural gradient ratio is too weak, or DG-01 signatures disagree",
+    "OP-01": "event gradients are strong and aligned but the checkpoint occupies a smooth failure basin"
+  },
+  "guardrails": [
+    "no optimizer construction or parameter update",
+    "no test group read",
+    "checkpoint and dataset hashes must agree",
+    "same validation manifest for all four cells",
+    "automatic branch scores require human review",
+    "DG-02 runs on the identical manifest before any training branch is authorized"
+  ],
+  "knowledge_updates_possible": ["K-009"],
+  "implementation": {
+    "script": "notebooks/micro_loss_landscape_observatory_12.py",
+    "notebook": "notebooks/kaggle_micro_loss_landscape_observatory_12.ipynb"
+  }
+}

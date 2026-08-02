@@ -1,0 +1,28 @@
+{
+  "policy_id": "SOURCE-REFRESH-15",
+  "version": "1.0.0",
+  "source_index": "research/methodology_source_index.json",
+  "source_count": 15,
+  "last_full_review_utc": "2026-08-02",
+  "last_full_review_reason": "methodology restoration after context compaction",
+  "mandatory_triggers": [
+    "after any conversation-context compaction or reconstructed session",
+    "before entering a new research-program phase",
+    "before each creative architecture sketch cycle",
+    "after every four completed core experiments",
+    "whenever the compact documentation is insufficient to justify a methodological choice"
+  ],
+  "review_contract": [
+    "Read all 15 indexed source files, not only their summaries.",
+    "Verify each source SHA-256 against methodology_source_index.json.",
+    "Record the review date, reason and any newly recovered nuance here.",
+    "If an original source is unavailable, stop methodological expansion and report which source is missing.",
+    "Compact documentation is an operational index and never replaces the original corpus."
+  ],
+  "newly_recovered_nuances": [
+    "The architecture taxonomy is a search library, not a linear ranking.",
+    "The Physics of Models method requires behavior probes and internal or mental probes together.",
+    "Architecture creation uses constrained recombination, multiple sketches, hit selection and mechanism deconvolution.",
+    "Qualitative plot observations must be preserved because aggregate statistics can erase failure morphology."
+  ]
+}

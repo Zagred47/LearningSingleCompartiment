@@ -41,6 +41,7 @@ def validate(root: Path) -> list[str]:
     architectures = _json(research / "architecture_catalog.json")
     indicators = _json(research / "indicator_catalog.json")
     methodology_sources = _json(research / "methodology_source_index.json")
+    source_refresh = _json(research / "source_refresh_state.json")
     methodology = _json(research / "creative_methodology.json")
     bias_taxonomy = _json(research / "inductive_bias_taxonomy.json")
     patterns = _json(research / "design_pattern_library.json")
@@ -59,6 +60,13 @@ def validate(root: Path) -> list[str]:
     method_ids = [a["id"] for a in methodology["axioms"]] + [m["id"] for m in methodology["search_modes"]]
     evaluation_ids = [layer["id"] for layer in evaluation["layers"]]
     evaluation_dimension_ids = [dimension["id"] for layer in evaluation["layers"] for dimension in layer["dimensions"]]
+
+    if source_refresh.get("source_count") != len(methodology_sources["sources"]):
+        errors.append("source refresh count must match methodology source index")
+    if source_refresh.get("source_index") != "research/methodology_source_index.json":
+        errors.append("source refresh must point to the canonical methodology source index")
+    if len(source_refresh.get("mandatory_triggers", [])) < 4:
+        errors.append("source refresh policy must preserve all mandatory reread triggers")
 
     for label, values in {
         "graph node": node_ids,

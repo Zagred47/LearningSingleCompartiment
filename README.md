@@ -216,6 +216,17 @@ ordine dei dati, finestre, budget massimo, stopping policy e budget di parametri
 checkpoint `last` e il migliore secondo il soma RMSE sugli eventi. I risultati
 FA-00 che motivano il confronto sono in `docs/failure_atlas_10_findings.md`.
 
+Il passo diagnostico successivo è
+`notebooks/kaggle_micro_loss_landscape_observatory_12.ipynb` (`DG-01`). Usa
+direttamente l'HDF5 event-enriched e lo ZIP completo del factorial 11, senza
+rigenerare dati o addestrare. Sui quattro checkpoint congelati misura loss,
+norme, SNR e coseni dei gradienti per regime e blocco, contributo effettivo
+degli eventi, relazione densità-errore, superfici filter-normalized,
+interpolazioni e curvatura Hessiana. Il manifest di validation è identico per
+tutte le celle e il test rimane chiuso. L'output è uno ZIP piccolo con tabelle,
+figure, convergenza degli stimatori e una decisione provvisoria da revisionare
+prima di `DG-02`.
+
 ## API essenziale
 
 ```python

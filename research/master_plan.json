@@ -38,6 +38,17 @@
     "synthetic_to_real_gate": "A microtask result authorizes only a controlled full-teacher preflight.",
     "composition_gate": "Every component must name an independent capability result and a monolithic capacity-matched control."
   },
+  "source_refresh_policy": {
+    "state_file": "research/source_refresh_state.json",
+    "source_index": "research/methodology_source_index.json",
+    "rule": "The 15 original sources remain authoritative and must be reread in full; the derived documentation is only a compact operational view.",
+    "mandatory_triggers": [
+      "conversation-context compaction or reconstructed session",
+      "entry into a new program phase",
+      "start of a creative architecture sketch cycle",
+      "four newly completed core experiments"
+    ]
+  },
   "promotion_ladder": [
     {
       "level": "L0_diagnostic",

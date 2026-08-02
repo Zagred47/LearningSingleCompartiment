@@ -579,10 +579,16 @@ for run_index, run in enumerate(requested_runs, start=1):
             selected_rows = rows[:CFG.hessian_windows]
 
             def closure(rows=selected_rows, indices=indices):
-                return torch.stack([
-                    window_loss(model, row, history_cache[row["window_id"]], indices)
-                    for row in rows
-                ]).mean()
+                # cuDNN RNNs implement first-order backward but not the double
+                # backward required by Hessian-vector products. The native
+                # PyTorch GRU path remains on the same CUDA device and supports
+                # the required derivatives. Only these short diagnostic
+                # forwards bypass cuDNN.
+                with torch.backends.cudnn.flags(enabled=False):
+                    return torch.stack([
+                        window_loss(model, row, history_cache[row["window_id"]], indices)
+                        for row in rows
+                    ]).mean()
 
             generator = torch.Generator(device=DEVICE).manual_seed(CFG.seed + run_index * 1000 + view_number)
             eigenvalue, residual, eigen_history = top_hessian_eigenvalue(

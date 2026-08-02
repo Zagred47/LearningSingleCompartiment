@@ -72,3 +72,20 @@ def test_recurrent_gradient_diagnostic_uses_training_compatible_mode() -> None:
     loss = model(torch.randn(2, 4, 2)).square().mean()
     loss.backward()
     assert all(parameter.grad is not None for parameter in model.parameters())
+
+
+def test_recurrent_hessian_uses_native_double_backward_path() -> None:
+    model = _EvalSensitiveRecurrent().train()
+    values = torch.randn(1, 3, 2)
+    parameters = list(model.parameters())
+
+    def closure() -> torch.Tensor:
+        with torch.backends.cudnn.flags(enabled=False):
+            return model(values).square().mean()
+
+    eigenvalue, residual, history = top_hessian_eigenvalue(
+        closure, parameters, iterations=2, generator=torch.Generator().manual_seed(9)
+    )
+    assert math.isfinite(eigenvalue)
+    assert math.isfinite(residual)
+    assert len(history) == 2

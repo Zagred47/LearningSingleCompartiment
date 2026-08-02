@@ -453,6 +453,11 @@ experiment_started = time.perf_counter()
 
 
 def collect_gradient_geometry(run: str, model: nn.Module, cache: Mapping[str, Any]):
+    # cuDNN intentionally disables the RNN backward path after an eval-mode
+    # forward. These checkpoints contain no stochastic training-time layer
+    # (GRU dropout is zero), so train mode changes no numerical forward
+    # behavior; it only enables the read-only gradient diagnostic on CUDA.
+    model.train()
     named = trainable_named_parameters(model)
     view_vectors: dict[str, dict[str, Any]] = {}
     total_windows = sum(len(rows) for rows, _ in view_contract.values())
@@ -511,6 +516,7 @@ def collect_gradient_geometry(run: str, model: nn.Module, cache: Mapping[str, An
                     "parameter_block": block,
                     "cosine": cosine(view_vectors[left]["blocks"][block], view_vectors[right]["blocks"][block]),
                 })
+    model.eval()
     return view_vectors
 
 
@@ -562,6 +568,10 @@ for run_index, run in enumerate(requested_runs, start=1):
 
     if not skip_hessian:
         print(f"[{run}] Hessian estimators", flush=True)
+        # Hessian-vector products require backward-through-backward. As above,
+        # train mode only enables cuDNN autograd and performs no parameter or
+        # buffer update for these architectures.
+        model.train()
         parameters = [parameter for _, parameter in trainable_named_parameters(model)]
         hessian_views = ("event_soma", "slow_states", "synaptic_states")
         for view_number, view in enumerate(hessian_views):
@@ -590,6 +600,7 @@ for run_index, run in enumerate(requested_runs, start=1):
                 "windows": len(selected_rows),
                 "context_policy": "frozen_full_history_TBPTT_boundary",
             })
+        model.eval()
     set_parameter_point(model, final_state)
     model_results[run] = model_result
     elapsed = time.perf_counter() - run_started

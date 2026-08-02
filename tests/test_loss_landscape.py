@@ -15,6 +15,17 @@ from hay_single_compartment.loss_landscape import (
 )
 
 
+class _EvalSensitiveRecurrent(nn.Module):
+    """Test double documenting the CUDA/cuDNN mode requirement."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.recurrent = nn.GRU(2, 3, batch_first=True)
+
+    def forward(self, values: torch.Tensor) -> torch.Tensor:
+        return self.recurrent(values)[0]
+
+
 def test_cosine_and_gradient_snr() -> None:
     left = torch.tensor([1.0, 0.0])
     assert cosine(left, left) == 1.0
@@ -54,3 +65,10 @@ def test_quadratic_hessian_estimators() -> None:
 def test_rank_correlation() -> None:
     assert math.isclose(rank_correlation([1, 2, 3], [4, 5, 6]), 1.0)
     assert math.isclose(rank_correlation([1, 2, 3], [6, 5, 4]), -1.0)
+
+
+def test_recurrent_gradient_diagnostic_uses_training_compatible_mode() -> None:
+    model = _EvalSensitiveRecurrent().train()
+    loss = model(torch.randn(2, 4, 2)).square().mean()
+    loss.backward()
+    assert all(parameter.grad is not None for parameter in model.parameters())

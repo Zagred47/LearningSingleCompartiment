@@ -1,0 +1,22 @@
+{
+  "observation_id":"",
+  "created_utc":"",
+  "experiment_id":"",
+  "figure_id":"",
+  "artifact_sha256":"",
+  "split":"validation",
+  "selection_rule":"",
+  "trajectory_ids":[],
+  "time_interval_ms":[null,null],
+  "literal_visual_description":"",
+  "affected_states":[],
+  "affected_compartments":[],
+  "affected_regimes":[],
+  "candidate_mechanisms":[],
+  "existing_metric_blind_spot":"",
+  "proposed_quantitative_signature":"",
+  "alternative_explanations":[],
+  "next_falsifying_view":"",
+  "promoted_to_indicator_id":null,
+  "knowledge_id":null
+}

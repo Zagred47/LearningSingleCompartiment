@@ -40,6 +40,11 @@ def validate(root: Path) -> list[str]:
     plan = _json(research / "master_plan.json")
     architectures = _json(research / "architecture_catalog.json")
     indicators = _json(research / "indicator_catalog.json")
+    methodology_sources = _json(research / "methodology_source_index.json")
+    methodology = _json(research / "creative_methodology.json")
+    bias_taxonomy = _json(research / "inductive_bias_taxonomy.json")
+    patterns = _json(research / "design_pattern_library.json")
+    evaluation = _json(research / "evaluation_taxonomy.json")
     registry = _csv(research / "experiment_registry.csv")
     literature = _csv(research / "literature_evidence.csv")
 
@@ -49,6 +54,11 @@ def validate(root: Path) -> list[str]:
     evidence_ids = [r["evidence_id"] for r in literature]
     architecture_ids = [a["id"] for a in architectures["architectures"]]
     indicator_ids = [i["id"] for i in indicators["indicators"]]
+    source_ids = [s["id"] for s in methodology_sources["sources"]]
+    pattern_ids = [p["id"] for p in patterns["patterns"]]
+    method_ids = [a["id"] for a in methodology["axioms"]] + [m["id"] for m in methodology["search_modes"]]
+    evaluation_ids = [layer["id"] for layer in evaluation["layers"]]
+    evaluation_dimension_ids = [dimension["id"] for layer in evaluation["layers"] for dimension in layer["dimensions"]]
 
     for label, values in {
         "graph node": node_ids,
@@ -57,6 +67,11 @@ def validate(root: Path) -> list[str]:
         "evidence": evidence_ids,
         "architecture": architecture_ids,
         "indicator": indicator_ids,
+        "methodology source": source_ids,
+        "design pattern": pattern_ids,
+        "method": method_ids,
+        "evaluation layer": evaluation_ids,
+        "evaluation dimension": evaluation_dimension_ids,
     }.items():
         for duplicate in _duplicates(values):
             errors.append(f"duplicate {label} id: {duplicate}")
@@ -107,6 +122,24 @@ def validate(root: Path) -> list[str]:
         for experiment_id in architecture.get("experiment_ids", []):
             if experiment_id not in experiments:
                 errors.append(f"architecture {architecture['id']} references missing experiment {experiment_id}")
+
+    source_set = set(source_ids)
+    for pattern in patterns["patterns"]:
+        for source in pattern.get("sources", []):
+            if source not in source_set:
+                errors.append(f"design pattern {pattern['id']} references missing methodology source {source}")
+    if bias_taxonomy.get("source_id") not in source_set:
+        errors.append(f"bias taxonomy references missing methodology source {bias_taxonomy.get('source_id')}")
+    for source in methodology_sources["sources"]:
+        canonical = source.get("canonical_source")
+        if canonical and canonical not in source_set:
+            errors.append(f"methodology source {source['id']} references missing canonical source {canonical}")
+    for level in bias_taxonomy["levels"]:
+        if not level.get("families"):
+            errors.append(f"bias taxonomy level {level.get('level')} has no families")
+        for family in level.get("families", []):
+            if not family.get("members"):
+                errors.append(f"bias taxonomy family {family.get('family')} has no members")
 
     return errors
 

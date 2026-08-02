@@ -1,0 +1,38 @@
+{
+  "methodology_id":"EVIDENCE-GUIDED-CREATIVE-DESIGN","version":"1.0.0","updated_utc":"2026-08-02",
+  "epistemic_position":{"theorem_extreme":"rigorous but often idealized and disconnected from trainable systems","ethology_extreme":"realistic behavior but noisy, confounded and weak on mechanism","physics_middle":"small enough for controlled repetition, rich enough for realistic learned behavior, with internal probing and later scale confirmation"},
+  "axioms":[
+    {"id":"M-A01","statement":"Existence is cheap; learnability is the real architectural property.","consequence":"Universal approximation or representability cannot promote a model."},
+    {"id":"M-A02","statement":"A benchmark score is a phenotype, not a mechanism.","consequence":"Every promoted result needs deconvolution through diagnostics, probes or component tests."},
+    {"id":"M-A03","statement":"Creativity is constrained recombination of established fragments.","consequence":"Maintain a library of architectures, primitives and functional descriptors; generate multiple sketches."},
+    {"id":"M-A04","statement":"Emergent component interactions are not fully predictable a priori.","consequence":"Use empirical screening, then rationalize survivors instead of pretending first-principles certainty."},
+    {"id":"M-A05","statement":"Mixed real tasks can hide capability differences below stochastic noise.","consequence":"Use atomic synthetic playgrounds and mini-scaling laws before full-teacher claims."},
+    {"id":"M-A06","statement":"Behavior and internal computation are separate objects of study.","consequence":"Pair output metrics and qualitative plots with activation, gradient and causal probing."},
+    {"id":"M-A07","statement":"Information gained per experiment matters more than the number of runs.","consequence":"Prefer orthogonal contrasts that eliminate branches of explanation."},
+    {"id":"M-A08","statement":"Synthetic discovery must resonate in the real target system.","consequence":"Capability-bench hits require controlled full-teacher preflight and later scale/data confirmation."}
+  ],
+  "search_modes":[
+    {"id":"MODE-RATIONAL","analogy":"structure-based design","use_when":"strong mathematical or biological prior exists","operation":"encode the prior in a standard architecture and test its causal benefit","risk":"correct static analogy but poor optimization dynamics"},
+    {"id":"MODE-ANALOGICAL","analogy":"ligand-based design","use_when":"successful architectures exist on related tasks","operation":"extract shared functional descriptors rather than copy whole models","risk":"cannot leave the neighborhood of known solutions"},
+    {"id":"MODE-PHENOTYPIC","analogy":"phenotypic screening","use_when":"mechanism is unknown","operation":"screen structurally diverse curated scaffolds on diagnostic phenotypes","risk":"benchmark chasing without target deconvolution"},
+    {"id":"MODE-FRAGMENT","analogy":"fragment-based design","use_when":"candidate primitives can be isolated","operation":"test minimal fragments, then grow/link/merge only supported fragments","risk":"fragments that work alone may not compose"},
+    {"id":"MODE-DENOVO","analogy":"de-novo design","use_when":"existing libraries cannot express a measured requirement","operation":"generate constrained compositions from established primitives","risk":"untrainable, uninterpretable or compute-inefficient inventions"}
+  ],
+  "creative_cycle":[
+    {"stage":"constraint_board","output":"task contract, forbidden leakage, known dynamics, failure signatures, compute ceiling"},
+    {"stage":"atomic_decomposition","output":"orthogonal capabilities and difficulty axes"},
+    {"stage":"reference_retrieval","output":"literature-grounded scaffold and primitive candidates from several taxonomy levels"},
+    {"stage":"sketch_generation","output":"10-20 small candidate sketches covering diverse mechanisms, not cosmetic variants"},
+    {"stage":"cheap_screen","output":"capability profiles on controlled microtasks; model-size x task-difficulty mini-scaling surfaces"},
+    {"stage":"hit_selection","output":"2-3 survivors selected by multi-metric signatures and guardrails"},
+    {"stage":"target_deconvolution","output":"probes, ablations and causal interventions explaining which mechanism is used"},
+    {"stage":"lead_optimization","output":"one-factor rational refinements to a supported mechanism"},
+    {"stage":"real_system_resonance","output":"capacity-matched full-teacher validation across seeds and regimes"},
+    {"stage":"composition","output":"only independently validated complementary components, plus monolithic control"},
+    {"stage":"confirmation","output":"data/compute scaling, OOD, rollout and one frozen test evaluation"}
+  ],
+  "mini_scaling_law":{"axes":["model capacity or mechanism budget","task difficulty","data quantity","event rarity/noise when relevant"],"output":"a capability surface with transition boundaries and uncertainty, never one winner number"},
+  "vertical_comparison_controls":["same data and order","same split and batch manifest","same initialization distribution and seed pairs","same tokenizer/encoding or input contract","same depth/width when meaningful","same parameter and update budget","same code path where possible","equally tuned nearby learning rates","multiple seeds before claims"],
+  "orthogonality_scorecard":["which live hypotheses receive different predictions","which confound is held fixed","which previous result cannot already predict the outcome","what branch closes under support/falsification","what qualitative signature would be surprising"],
+  "anti_patterns":["single aggregate leaderboard","endless local tweaking","new loss plus new architecture plus new sampler in one run","scaling before capability","claiming mechanism from decodability","claiming impossibility from one failed implementation","inventing a component without established precedent or isolated test","reading only final metrics and ignoring curves or plots"]
+}

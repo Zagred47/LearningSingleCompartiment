@@ -1,0 +1,44 @@
+{
+  "taxonomy_id":"HAY-EVALUATION-OBSERVATION","version":"1.0.0","updated_utc":"2026-08-02",
+  "principle":"Evaluation is a vector of partially independent views. No aggregate score may erase a failed regime, state family, temporal scale or information contract.",
+  "layers":[
+    {"id":"EV-BEHAVIOR","name":"external behavior","dimensions":[
+      {"id":"EV-POINT","name":"pointwise state fidelity","measures":["MAE","RMSE","normalized RMSE","bias","correlation","worst-coordinate error"],"stratify_by":["state","state family","compartment","regime","trajectory","time since event"]},
+      {"id":"EV-DIST","name":"residual distribution","measures":["quantiles","skewness","kurtosis","tail index","heteroscedasticity","conditional bias","error autocorrelation"],"stratify_by":["state family","regime","amplitude bin","input density"]},
+      {"id":"EV-EVENT","name":"event morphology","measures":["precision","recall","F1","count error","peak amplitude error","peak-time error","rise/decay slope error","width","area","after-hyperpolarization","burst inter-spike interval","rapid-fire continuation/miss"],"stratify_by":["isolated spike","burst","rapid fire","plateau-associated","compartment"]},
+      {"id":"EV-FREQ","name":"frequency and multiresolution","measures":["band power ratio","PSD distance","spectral coherence","cross-spectrum","STFT distance","wavelet energy by scale","phase lag"],"stratify_by":["state","regime","frequency band","event window"]},
+      {"id":"EV-ROLL","name":"closed-loop rollout","measures":["horizon RMSE curve","error AUC","first divergence time","event survival by horizon","boundedness","state-family drift rate","error growth exponent"],"stratify_by":["initial regime","input continuation","state family","horizon"]},
+      {"id":"EV-DYN","name":"dynamical geometry","measures":["phase portrait discrepancy","delay-embedding geometry","recurrence rate","determinism","laminarity","trapping time","Lyapunov-style local divergence estimate","attractor occupancy","transition matrix"],"stratify_by":["regime","embedding parameters","trajectory"]},
+      {"id":"EV-SPATIAL","name":"four-compartment propagation","measures":["lag-conditioned transfer error","cross-compartment coherence","attenuation/amplification error","directionality","local versus propagated event error"],"stratify_by":["source compartment","target compartment","path distance","input region"]},
+      {"id":"EV-PROB","name":"uncertainty and calibration","measures":["predictive interval coverage","negative log likelihood","calibration error","sharpness","coverage by regime"],"stratify_by":["regime","state family","horizon"]},
+      {"id":"EV-ROBUST","name":"robustness and generalization","measures":["OOD regime error","input-rate shift","timing jitter sensitivity","missing-channel sensitivity","initial-state perturbation","parameter-noise sensitivity"],"stratify_by":["shift type","severity","state family"]},
+      {"id":"EV-EFF","name":"efficiency","measures":["parameters","FLOPs","wall time","peak memory","examples to threshold","updates to threshold","energy when available"],"stratify_by":["model size","data fraction","difficulty"]}
+    ]},
+    {"id":"EV-INTERNAL","name":"single-network internal computation","dimensions":[
+      {"id":"INT-ACT","name":"activation distributions","measures":["mean","standard deviation","quantiles","skewness","kurtosis","entropy","sparsity","dead fraction","saturated fraction","derivative magnitude"],"stratify_by":["layer","channel","time","regime","state family"]},
+      {"id":"INT-GATE","name":"gates and memory","measures":["gate mean/entropy","open/closed fraction","time constant proxy","memory autocorrelation","reset/update coupling","event-conditioned trajectories"],"stratify_by":["cell","layer","regime","time to event"]},
+      {"id":"INT-GEOM","name":"representation geometry","measures":["effective rank","participation ratio","singular spectrum","CKA/RSA","class/regime separation","trajectory curvature","latent recurrence"],"stratify_by":["layer","regime","training time"]},
+      {"id":"INT-PROBE","name":"decodability probes","measures":["linear probe","nonlinear probe control","phase decoding","state-family decoding","future-event decoding","compartment-source decoding"],"stratify_by":["layer","lag","probe capacity"],"warning":"decodability is evidence of presence, not causal use"},
+      {"id":"INT-CAUSAL","name":"causal representation use","measures":["activation patching","channel ablation","state clamping","counterfactual intervention","mediated effect"],"stratify_by":["layer","time","regime"],"warning":"interventions must remain inside the causal information contract"},
+      {"id":"INT-JAC","name":"local dynamics and sensitivity","measures":["input Jacobian spectrum","hidden-state Jacobian spectrum","spectral radius","singular values","local Lipschitz proxy","gradient propagation by lag"],"stratify_by":["regime","state","layer","time"]}
+    ]},
+    {"id":"EV-TRAIN","name":"training and optimization","dimensions":[
+      {"id":"TR-CURVE","name":"learning curves","measures":["train/validation loss by update","component losses","regime metrics by update","time-to-threshold","overfit gap","grokking/delayed emergence"],"stratify_by":["seed","learning rate","difficulty","model size"]},
+      {"id":"TR-GRAD","name":"gradient and update flow","measures":["gradient norm","variance","signal-to-noise","update-to-weight ratio","clipping fraction","per-block norm","cross-objective cosine","Fisher diagonal proxy"],"stratify_by":["parameter block","regime","loss component","training phase"]},
+      {"id":"TR-LAND","name":"loss landscape","measures":["filter-normalized slices","initial-final interpolation","sharpness","Hessian top eigenvalue","Hessian trace","anisotropy","mode connectivity","noise sensitivity"],"stratify_by":["regime loss","checkpoint","seed"],"tier_2":["fractal/wavelet roughness","multifractal spectrum","Hölder regularity","minimum-energy path","persistent homology","Morse/saddle analysis"]},
+      {"id":"TR-STOCH","name":"stochastic stability","measures":["between-seed variance","nearby-learning-rate variance","data-order variance","bootstrap confidence intervals","rank stability","effect-size distribution"],"stratify_by":["metric","difficulty","capacity"]}
+    ]},
+    {"id":"EV-CAPABILITY","name":"capability profiles and mini-scaling laws","dimensions":[
+      {"id":"CAP-SURFACE","name":"capacity x difficulty surface","measures":["success surface","transition boundary","slope with capacity","slope with difficulty","seed uncertainty"]},
+      {"id":"CAP-DATA","name":"data efficiency surface","measures":["metric versus examples","metric versus event count","area under learning curve","minimum data to guardrail"]},
+      {"id":"CAP-COMP","name":"compositional generalization","measures":["held-out mechanism combinations","length/horizon extrapolation","unseen event-density combinations"]}
+    ]}
+  ],
+  "qualitative_plot_protocol":{
+    "purpose":"Detect morphology and failure signatures that scalar summaries were not designed to represent.",
+    "mandatory_views":["random trajectories chosen before inference","worst validation trajectories selected by preregistered metric","event-aligned overlays with uncertainty","residual heatmaps state x time","per-compartment panels","teacher/prediction phase portraits","recurrence plots","horizon waterfall","activation/gate event-aligned small multiples","training curves for every component loss and guardrail"],
+    "observation_record_fields":["observation_id","figure_id","selection_rule","trajectory/split","time interval","literal visual description","affected states/regimes","candidate explanations","existing metric blind spot","proposed quantitative signature","alternative explanations","next falsifying view"],
+    "rules":["describe before explaining","separate literal observation from mechanism inference","record negative and contradictory views","never generalize from one hand-picked trace","translate a repeated visual signature into a registered metric or diagnostic","preserve the original figure and selection manifest"]
+  },
+  "reporting_rule":"Every model card reports a metric tensor, a capability surface when applicable, internal-computation diagnostics, a qualitative observation log, uncertainty and explicit guardrail failures."
+}

@@ -11,5 +11,8 @@ The bench prevents full-teacher runs from becoming architecture popularity conte
 
 Standard GRU/LSTM, TCN, S4, CfC/LTC and message passing are compared where applicable. Parameter count, data, updates and causal information are matched. Failure prunes the architecture from the corresponding full-teacher branch. Passing authorizes only a one-seed preflight, not a superiority claim.
 
-Generators, splits and seeds must be archived and must require compositional generalization rather than fixed-waveform memorization.
+For every task, publish a mini-scaling surface over at least model capacity and task difficulty, with seed uncertainty. Difficulty may be delay, threshold sharpness, number of interacting timescales, event rarity, graph distance or noise. The screen must preserve all generated sketches and select 2–3 mechanistically diverse hits rather than only the top scalar score.
 
+Each hit then receives internal analysis appropriate to its family: recurrent gates and memory, convolutional receptive-field use, SSM impulse/memory spectra, continuous-time effective constants, or graph message propagation. Decodability must be separated from causal use through ablation or intervention.
+
+Generators, splits and seeds must be archived and must require compositional generalization rather than fixed-waveform memorization.

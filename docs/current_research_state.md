@@ -8,3 +8,4 @@ Earlier diagnostics show broad event-support information reaches recurrent laten
 
 Next: DG-01 then DG-02 on frozen checkpoints and identical validation batches. Their signatures—not preference—select matched exposure, Balanced MSE, conflict treatment, predicted-state feedback or the capability bench. See [`research_operating_system.md`](research_operating_system.md).
 
+The discovery program now also preserves the complete inductive-bias taxonomy and the creative methodology supplied by the user. After diagnosis, the capability phase will generate multiple small sketches, map capacity × difficulty surfaces and probe internal computation before any architecture is scaled. Evaluation includes granular state/regime/event/rollout metrics plus structured qualitative plot observations and statistics inside each network.

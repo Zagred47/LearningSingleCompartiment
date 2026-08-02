@@ -1,0 +1,46 @@
+{
+  "taxonomy_id":"DEEP-ARCH-BIAS-TAXONOMY","version":"1.0.0","updated_utc":"2026-08-02","source_id":"SRC-TAXONOMY",
+  "principle":"Each level adds a stronger assumption about what the data are. Levels are not a quality ranking and can be composed.",
+  "levels":[
+    {"level":0,"name":"universal foundations","assumption":"the datum can be treated as a vector or distribution","families":[
+      {"family":"pure feed-forward","members":["MLP","Radial Basis Function Network","KAN","MLP-Mixer","gMLP","ResMLP"]},
+      {"family":"representation by reconstruction","members":["vanilla autoencoder","denoising autoencoder","sparse autoencoder","contractive autoencoder","VAE","beta-VAE","Wasserstein AE","VQ-VAE","masked autoencoder"]},
+      {"family":"energy and equilibrium","members":["classical Hopfield network","modern Hopfield network","RBM","DBN","DBM","Helmholtz machine","generic EBM"]},
+      {"family":"reservoir computing","members":["Echo State Network","Liquid State Machine"]},
+      {"family":"probabilistic uncertainty","members":["Bayesian neural network","Deep Gaussian Process","Neural Process","Conditional Neural Process"]}
+    ]},
+    {"level":1,"name":"weak structural bias","assumption":"generic symmetries, relations, metric structure or external memory exist without a fixed task topology","families":[
+      {"family":"equivariance and symmetry","members":["G-CNN","steerable CNN","E(n)-equivariant GNN","SE(3)-Transformer","Tensor Field Network","Lie Group Network","gauge-equivariant CNN","capsule network","geometric deep learning"]},
+      {"family":"generic relational attention","members":["Transformer","multi-head self-attention","cross-attention","linear attention","sparse attention","Reformer","Performer","Nyströmformer","Perceiver","Perceiver IO","Set Transformer","ISAB","Slot Attention"]},
+      {"family":"metric learning","members":["Siamese network","triplet network","prototypical network","SimCLR pattern","MoCo pattern","BYOL pattern"]},
+      {"family":"external differentiable memory","members":["Neural Turing Machine","Differentiable Neural Computer","Memory Network","End-to-End Memory Network","memory-augmented neural network"]},
+      {"family":"state-space sequence operators","members":["generic SSM","S4","S4D","S5","Mamba","Mamba-2","H3","Hyena","RWKV","RetNet","Griffin","xLSTM"]}
+    ]},
+    {"level":2,"name":"temporal bias","assumption":"order, causality and/or physical timing matter","families":[
+      {"family":"discrete recurrence","members":["vanilla RNN","LSTM","GRU","bidirectional RNN","Clockwork RNN","Hierarchical Multiscale RNN","unitary RNN","orthogonal RNN","Quasi-RNN","SRU"]},
+      {"family":"continuous-time recurrence","members":["Neural ODE","Augmented Neural ODE","Neural CDE","Neural SDE","Liquid Time-Constant network","CTRNN","Latent ODE","ODE-RNN"]},
+      {"family":"event-driven timing","members":["Neural Point Process","Temporal Point Process","Neural Hawkes Process","continuous-time event model","asynchronous timestamp model"]},
+      {"family":"attention over sequences","members":["Bahdanau attention","Luong attention","autoregressive Transformer","bidirectional Transformer","encoder-decoder Transformer","Transformer-XL","Compressive Transformer","Universal Transformer","Adaptive Computation Time"]},
+      {"family":"explicit position and time encoding","members":["sinusoidal position","learned position","relative position","RoPE","ALiBi","CoPE","T5 relative bias"]}
+    ]},
+    {"level":3,"name":"spatial and multiscale bias","assumption":"locality, translation structure, spatial hierarchy or explicit resolution bands exist","families":[
+      {"family":"atomic convolution operators","members":["standard convolution","depthwise convolution","depthwise-separable convolution","grouped convolution","dilated convolution","deformable convolution","transposed convolution","1x1 channel mixing","3D convolution","2+1D convolution","dynamic convolution","conditional convolution"]},
+      {"family":"foundational CNNs","members":["LeNet","AlexNet","VGG","Inception","ResNet","ResNeXt","DenseNet","Squeeze-and-Excitation","CBAM","ECA"]},
+      {"family":"efficient CNNs","members":["MobileNet","ShuffleNet","SqueezeNet","GhostNet","EfficientNet"]},
+      {"family":"modern CNNs","members":["ConvNeXt","RepVGG","SLaK","UniRepLKNet","FocalNet","HorNet"]},
+      {"family":"vision transformer hybrids","members":["ViT","DeiT","BEiT","Swin Transformer","CoAtNet","MaxViT","CvT","MetaFormer","PoolFormer"]},
+      {"family":"explicit feature pyramids","members":["FPN","PANet","BiFPN","NAS-FPN","ASPP"]},
+      {"family":"frequency and multiresolution","members":["scattering network","wavelet neural network","multi-resolution analysis network"]}
+    ]},
+    {"level":4,"name":"relational and topological bias","assumption":"the system has an explicit graph, hierarchy, combinatorial structure or non-Euclidean geometry","families":[
+      {"family":"message passing on graphs","members":["GCN","GraphSAGE","GAT","GIN","MPNN","ChebNet","DiffPool","TopKPool","MinCutPool"]},
+      {"family":"dynamic and higher-order graphs","members":["Temporal Graph Network","hypergraph neural network","simplicial neural network","cellular neural network","sheaf neural network"]},
+      {"family":"combinatorial structures","members":["recursive neural network","Tree-LSTM","Tree-GRU","DAG network","algebraic-structure network"]},
+      {"family":"non-Euclidean geometry","members":["hyperbolic neural network","Poincaré embedding","Lorentzian model","mixed-curvature product space"]},
+      {"family":"explicit relational inference","members":["Relation Network","Interaction Network","Neural Relational Inference","Relational Memory Core"]}
+    ]}
+  ],
+  "cross_cutting_primitives":["residual connection","skip connection","dense connection","BatchNorm","LayerNorm","GroupNorm","InstanceNorm","RMSNorm","GLU","SwiGLU","GeGLU","Mixture of Experts","Soft MoE","hypernetwork","dropout","stochastic depth"],
+  "transverse_families":["generative modeling","task-specific heads","meta-learning"],
+  "hay_relevance_rule":"The full taxonomy is retained as a creative search library. Relevance to Hay is assigned by a measured capability or causal hypothesis, never by name similarity."
+}

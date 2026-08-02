@@ -18,6 +18,12 @@ reasoning history.
 | `literature_evidence.csv` | primary scientific grounding and transfer limits |
 | `experiment_card_template.json` | mandatory pre-run and post-run record |
 | `research_program.xlsx` | read-only convenient view of the canonical files |
+| `methodology_source_index.json` | identity and incorporation map for the 15 supplied methodology sources |
+| `creative_methodology.json` | physics-style, drug-design and compositional creative workflow |
+| `inductive_bias_taxonomy.json` | complete architecture library organized by strength of assumption |
+| `design_pattern_library.json` | established functional fragments and their diagnostic entry conditions |
+| `evaluation_taxonomy.json` | behavioral, internal, optimization, qualitative and capability metrics |
+| `qualitative_observation_template.json` | structured conversion of a plot observation into a testable signature |
 
 JSON and CSV files are canonical. The workbook and Markdown documents are
 views. They must never become independent stores of unrecorded decisions.

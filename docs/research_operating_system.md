@@ -1,6 +1,6 @@
 # Research operating system
 
-This is the human entry point for the Hay micro-model architecture-discovery program. The plan is finite, evidence-gated and designed to prevent notebook accumulation without knowledge accumulation. Machine-readable sources of truth live in [`research/`](../research/README.md); the workbook is a generated navigation view.
+This is the human entry point for the Hay micro-model architecture-discovery program. The plan is finite, evidence-gated and designed to prevent notebook accumulation without knowledge accumulation. Machine-readable sources of truth live in [`research/`](../research/README.md); the workbook is a generated navigation view. The complete scientific and creative foundation is restored in [`methodological_corpus.md`](methodological_corpus.md).
 
 ## Objective
 
@@ -47,6 +47,12 @@ Core ceiling: 36 notebooks. Conditional reserve: 12. Absolute ceiling: 48. A bra
 
 Detailed phase definitions are in [`master_plan.json`](../research/master_plan.json).
 
+## Creative discovery inside the finite plan
+
+The plan is not a fixed list of fashionable architectures. Each discovery cycle creates a constraint board, decomposes one failure into atomic capabilities, retrieves candidates from the complete [inductive-bias taxonomy](inductive_bias_taxonomy.md), generates 10–20 small structurally diverse sketches, maps capacity × difficulty profiles, selects 2–3 hits, deconvolves their internal mechanism and only then performs lead optimization and full-teacher validation. See [`creative_architecture_discovery.md`](creative_architecture_discovery.md).
+
+Metrics and plots are equally institutionalized. Every run reports granular external behavior, single-network internal statistics, optimization geometry and a structured qualitative observation log according to [`evaluation_and_observation_protocol.md`](evaluation_and_observation_protocol.md).
+
 ## Immediate order
 
 1. Run **DG-01**, read-only, on the four frozen factorial-11 checkpoints.
@@ -67,4 +73,5 @@ Negative results are scoped. Factorial 11 rejects the tested 7.5 ms causal front
 - [`indicator_catalog.json`](../research/indicator_catalog.json): diagnostic triggers and authorized actions.
 - [`literature_evidence.csv`](../research/literature_evidence.csv): primary-source grounding.
 - [`research_runbook.md`](research_runbook.md): mandatory procedure.
-
+- [`methodological_corpus.md`](methodological_corpus.md): complete epistemic and creative framework.
+- [`evaluation_and_observation_protocol.md`](evaluation_and_observation_protocol.md): metric tensor, internal statistics and plot-reading protocol.

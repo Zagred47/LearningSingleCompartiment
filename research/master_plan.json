@@ -28,6 +28,16 @@
     "Do not promote a result explained only by more parameters, optimizer updates or privileged teacher information.",
     "Do not run an experiment that cannot name the knowledge-ledger entry it may update."
   ],
+  "creative_discovery_policy": {
+    "source": "research/creative_methodology.json",
+    "sketches_per_cycle": "10-20 structurally distinct small candidates before narrowing",
+    "hits_per_cycle": "2-3 survivors selected by capability profile and guardrails",
+    "required_search_mode_diversity": "At least two of rational, analogical, phenotypic, fragment-based or constrained de-novo when the hypothesis permits.",
+    "mini_scaling_axes_minimum": 2,
+    "mandatory_deconvolution": "A hit cannot enter lead optimization until probes or interventions identify a plausible used mechanism.",
+    "synthetic_to_real_gate": "A microtask result authorizes only a controlled full-teacher preflight.",
+    "composition_gate": "Every component must name an independent capability result and a monolithic capacity-matched control."
+  },
   "promotion_ladder": [
     {
       "level": "L0_diagnostic",
@@ -107,7 +117,10 @@
         "slow integration benchmark",
         "threshold and hysteresis benchmark",
         "fast-slow switching benchmark",
-        "four-node propagation benchmark"
+        "four-node propagation benchmark",
+        "model-capacity x task-difficulty mini-scaling surfaces",
+        "10-20 sketch portfolio and 2-3 selected hits",
+        "internal probes for each selected hit"
       ],
       "exit_criteria": [
         "each scaffold has a capability signature",
@@ -145,7 +158,9 @@
         "state-feedback baseline",
         "recurrent family screen",
         "state-space family screen",
-        "continuous-time family screen"
+        "continuous-time family screen",
+        "learning curves and capability profiles rather than a final-score-only table",
+        "mechanism deconvolution for each survivor"
       ],
       "exit_criteria": [
         "one global scaffold promoted",

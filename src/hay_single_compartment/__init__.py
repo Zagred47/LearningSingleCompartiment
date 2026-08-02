@@ -54,6 +54,16 @@ from .input_only import (
     count_trainable_parameters,
     move_hidden,
 )
+from .capability_bench import (
+    CAPABILITY_ARCHITECTURES,
+    FAST_SLOW_DIFFICULTIES,
+    FastSlowDifficulty,
+    build_capability_model,
+    count_parameters,
+    fast_slow_metrics,
+    generate_fast_slow_sequences,
+    width_for_budget,
+)
 from .event_aware import (
     AuxiliarySpikePhaseLoss,
     MICRO_EVENT_NAMES,
@@ -139,6 +149,14 @@ __all__ = [
     "StateDecoder",
     "count_trainable_parameters",
     "move_hidden",
+    "CAPABILITY_ARCHITECTURES",
+    "FAST_SLOW_DIFFICULTIES",
+    "FastSlowDifficulty",
+    "build_capability_model",
+    "count_parameters",
+    "fast_slow_metrics",
+    "generate_fast_slow_sequences",
+    "width_for_budget",
     "MICRO_EVENT_NAMES",
     "AuxiliarySpikePhaseLoss",
     "ConservativeSpikeFineTuneLoss",

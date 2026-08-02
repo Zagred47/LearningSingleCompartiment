@@ -1,0 +1,74 @@
+{
+  "experiment_id": "CB-01",
+  "artifact_name": "hay_micro_fast_slow_capability_15_complete.zip",
+  "status": "preregistered",
+  "promotion_level": "capability_screen",
+  "primary_axis": "architecture_family",
+  "hypotheses_tested": ["H-TIME-01", "H-OPT-02"],
+  "methodology_sources": [
+    "SRC-POLM-4-1A",
+    "SRC-POLM-4-1B",
+    "SRC-POLM-4-2",
+    "SRC-CREATIVE",
+    "SRC-TAXONOMY"
+  ],
+  "task_contract": {
+    "inputs": ["positive cue", "negative cue", "trigger event"],
+    "targets": ["leaky slow evidence", "narrow conditional fast waveform", "recovery state"],
+    "causal_rule": "a waveform occurs only when a trigger arrives above the slow-evidence threshold and outside refractory state",
+    "difficulty_axes": ["slow-memory decay", "cue and trigger rarity", "threshold", "waveform width", "refractory duration"],
+    "levels": ["easy", "medium", "hard"],
+    "hay_dataset_opened": false,
+    "hay_test_opened": false
+  },
+  "architecture_portfolio": [
+    {"name": "mlp", "family": "memoryless feed-forward", "precedent": "standard MLP"},
+    {"name": "rnn", "family": "discrete recurrence", "precedent": "Elman RNN"},
+    {"name": "gru", "family": "gated discrete recurrence", "precedent": "GRU-2014"},
+    {"name": "lstm", "family": "gated cell-state recurrence", "precedent": "LSTM-1997"},
+    {"name": "tcn", "family": "causal dilated convolution", "precedent": "TCN-2018"},
+    {"name": "transformer", "family": "causal self-attention", "precedent": "Transformer-2017"},
+    {"name": "cfc", "family": "closed-form continuous time", "precedent": "CFC-2022"},
+    {"name": "ltc", "family": "liquid time-constant ODE recurrence", "precedent": "LTC-2021"},
+    {"name": "conv_gru", "family": "local convolution plus GRU", "precedent": "causal convolution and GRU composition"},
+    {"name": "conv_lstm", "family": "local convolution plus LSTM", "precedent": "causal convolution and LSTM composition"}
+  ],
+  "controls": {
+    "parameter_budgets": [8000, 32000],
+    "budget_matching": "nearest width is recorded, and relative parameter error is reported",
+    "training_objective": "normalized three-state MSE",
+    "optimizer": "AdamW with equal weight decay, gradient clipping, epoch and update schedule",
+    "learning_rate_calibration": "each architecture receives the same two-rate calibration on medium difficulty and the large budget",
+    "screen_seed": 20260804,
+    "data": "identical fixed train and validation arrays for every architecture within a difficulty",
+    "screening": "all ten sketches receive one paired seed over the complete capacity x difficulty grid"
+  },
+  "metrics": [
+    "spike precision recall and F1",
+    "event voltage RMSE",
+    "peak amplitude MAE",
+    "timing MAE",
+    "false spikes per 1000 steps",
+    "slow, voltage, recovery and mean state NRMSE",
+    "subthreshold voltage RMSE",
+    "trigger accuracy",
+    "qualitative hard-event traces"
+  ],
+  "hit_selection": {
+    "rule": "rank the large-budget screen jointly by spike F1, event RMSE, peak MAE, slow NRMSE and false spikes",
+    "diversity": "select at most one winner per mechanism group before taking the best three groups",
+    "replication": "the three selected leads receive two additional paired model seeds across the full capacity x difficulty grid"
+  },
+  "promotion_rule": {
+    "scope": "three-seed mean at large budget on hard difficulty",
+    "minimum_spike_f1": 0.20,
+    "maximum_slow_nrmse": 0.50,
+    "maximum_false_spikes_per_1000_steps": 1.0,
+    "authorization": "a passing hit proceeds only to internal mechanism deconvolution, not directly to a Hay claim"
+  },
+  "failure_rules": [
+    "failure on easy difficulty prunes the family from threshold-transition use under this training contract",
+    "capacity improvement without hard-difficulty transition success supports scaling sensitivity but does not promote",
+    "if no family passes hard promotion thresholds, separate objective/exposure capability from architecture before a Hay run"
+  ]
+}

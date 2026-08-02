@@ -1,7 +1,9 @@
 {
   "experiment_id": "SR-01",
   "artifact_name": "hay_micro_state_feedback_preflight_14_complete.zip",
-  "status": "preregistered",
+  "status": "completed",
+  "artifact_sha256": "e131b33f42c11ec129a3bd7685a5ef40713a72ed2ee39d84698e302f20fcc691",
+  "decision": "close_direct_feedback_branch",
   "promotion_level": "L1_preflight",
   "primary_axis": "information_contract",
   "hypothesis_tested": "H-STATE-01",

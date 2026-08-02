@@ -11,7 +11,7 @@ flowchart TB
   O5[O-005 tested causal frontend fails] -->|falsifies| HC{{H-SCAFFOLD-01 frontend sufficient}}
   O6[O-006 event regime in latent/router] --> HR1{{H-REP-01 broad regime supported}}
   O6 -->|weakens| HR2{{H-REP-02 exact phase weakened}}
-  O6 --> HS{{H-STATE-01 own-state feedback open}}
+  O6 --> HS{{H-STATE-01 direct all-state feedback falsified}}
   O7[O-007 event updates scarce] --> HE{{H-TRAIN-01 exposure supported diagnostically}}
   O8[O-008 event gradients usable] --> HL2
   O9[O-009 density-error anticorrelation] --> HL2
@@ -23,14 +23,17 @@ flowchart TB
   O13 --> HS
   O14[O-014 latent manifold strongly compressed] --> HS
   O15[O-015 event activation gradients alive] -->|weakens dead-gradient account| HO
+  O16[O-016 direct all-state feedback fails] -->|falsifies| HS
+  O16 --> CB1
+  O17[O-017 feedback error is state-family selective] --> HM{{H-MODULAR-01 partial modularity supported}}
   DG1[DG-01 Landscape Observatory] --> HL2
   DG1 --> HO
   DG2[DG-02 Activation Atlas completed] --> HR1
   DG2 --> HR2
   TR[TR-01 matched exposure] --> HE
   BM[LO-02 Balanced MSE] --> HL2
-  SR[SR-01 own-state feedback] --> HS
-  CB1[CB-01 fast-slow threshold] --> HT
+  SR[SR-01 own-state feedback completed] --> HS
+  CB1[CB-01 ten-family fast-slow screen preregistered] --> HT
   CB2[CB-02 four-node propagation] --> HG{{H-SPATIAL-01 message passing open}}
 ```
 

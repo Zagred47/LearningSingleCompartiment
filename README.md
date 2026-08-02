@@ -245,6 +245,18 @@ principio della traiettoria. Il test resta chiuso; di default lo ZIP leggero
 esclude i checkpoint di resume, che possono essere inclusi impostando
 `HAY_SR01_DOWNLOAD_CHECKPOINTS=1`.
 
+SR-01 ha chiuso il feedback diretto di tutti i 61 stati: miglioramento evento
+0,064%, zero spike recuperati e guardrail sinaptico a 1,50x. Il passo seguente
+Ã¨ `notebooks/kaggle_micro_fast_slow_capability_bench_15.ipynb` (`CB-01`). Non
+richiede alcun dataset Kaggle e non apre dati Hay. Genera un playground causale
+sintetico con integrazione lenta, trigger condizionale, transizione rapida e
+recovery; confronta MLP, RNN, GRU, LSTM, TCN, Transformer, CfC, LTC, ConvGRU e
+ConvLSTM a due budget di parametri e tre difficoltÃ . Il primo seed seleziona
+massimo tre famiglie meccanisticamente diverse e soltanto queste ricevono altri
+due seed. La barra globale mostra fit completati ed ETA; lo ZIP contiene
+superfici di capacitÃ , curve qualitative, decisione e piccoli checkpoint dei
+lead replicati.
+
 ## API essenziale
 
 ```python

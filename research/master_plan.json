@@ -100,7 +100,7 @@
     {
       "phase_id": "P1",
       "name": "Baseline observatory",
-      "status": "active",
+      "status": "completed",
       "notebook_budget": 4,
       "purpose": "Separate output failure, representation failure and optimization failure before changing a model.",
       "entry_criteria": ["valid baseline checkpoint", "validation-only replay"],
@@ -120,7 +120,7 @@
     {
       "phase_id": "P2",
       "name": "Capability bench",
-      "status": "planned",
+      "status": "active",
       "notebook_budget": 4,
       "purpose": "Test established layers on isolated algorithmic capabilities before full-teacher training.",
       "entry_criteria": ["P1 dominant signatures"],
@@ -247,8 +247,8 @@
     }
   ],
   "current_next_actions": [
-    "DG-02 selected the information-contract/scaffold branch: broad event support is represented but exact phase and amplitude are not linearly accessible.",
-    "Run the one-seed SR-01 preflight with parameter-identical standard GRUs: no state context, initialization-only state, and own predicted-state feedback.",
-    "If recursive predicted-state feedback clears event and common-regime guardrails, replicate it across three seeds; otherwise close that contract branch and enter the capability bench before screening broader scaffolds."
+    "SR-01 rejected direct recursive feedback of all 61 predicted states: event improvement was negligible, all spikes remained absent and synaptic-state error increased 50 percent.",
+    "Run CB-01 as the first capability screen: ten established architecture families, two approximate parameter budgets and three fast-slow threshold difficulties, with paired data and updates.",
+    "Select at most three mechanism-diverse leads from the one-seed screen, replicate only those across two additional seeds, then deconvolve promoted mechanisms before any new Hay-teacher scaffold."
   ]
 }
